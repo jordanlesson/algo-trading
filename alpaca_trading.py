@@ -5,8 +5,8 @@ import time
 import asyncio
 
 alpaca_api = alpaca.REST(
-    key_id = 'PKHOZ4HY9LW966N7YVYS',
-    secret_key = 'sJ29MQ4Bgf8XlYrxu73GYsatmH1kWLX5oqKwGbvH',
+    key_id = 'PKYGK3F5QQ3NX7LIZKTP',
+    secret_key = 'bpaI7jMkLu1Knnocaz8fzWMBxRC8oxGIqnXGZSk0',
     base_url = 'https://paper-api.alpaca.markets',
 )
 
@@ -24,7 +24,7 @@ def main():
             class_a_info = stock_info[0]
             class_b_info = stock_info[1]
 
-            spread = abs(class_a_info["latestPrice"] - class_b_info["latestPrice"])
+            spread = class_a_info["latestPrice"] - class_b_info["latestPrice"]
 
             if spread is not None:
                 average_spread = asyncio.run(get_historical_data('GOOG', 'GOOGL'))
@@ -32,8 +32,11 @@ def main():
                 upper_bound = average_spread + (0.25 * average_spread)
                 lower_bound = average_spread - (0.25 * average_spread)
 
-                if spread > upper_bound or spread < lower_bound:
-                    hedge_position(class_a_info, class_b_info)
+                if spread > upper_bound:
+                    asyncio.run(hedge_position(class_a_info, class_b_info))
+
+                elif spread < lower_bound:
+                    asyncio.run(hedge_position(class_b_info, class_a_info))
 
         time.sleep(0.333)
 
@@ -99,7 +102,7 @@ async def get_historical_data(class_a, class_b):
             class_a_avg_price = float(class_a_data)
             class_b_avg_price = float(class_b_data)
 
-            avg_spread = abs(class_a_avg_price - class_b_avg_price)
+            avg_spread = class_a_avg_price - class_b_avg_price
 
             return avg_spread
 
@@ -114,14 +117,18 @@ async def get_historical_data(class_a, class_b):
         return None
 
 
-async def hedge_position(class_a_info, class_b_info):
+async def hedge_position(buy_stock, short_stock):
+    try:
+        account = alpaca_api.get_account()
+        positions = alpaca_api.list_positions()
+        print(positions)
+        if buy_stock["latestPrice"] < float(account.cash):
+            alpaca_api.submit_order(short_stock["symbol"], 5, 'sell', 'market', 'day')
+            alpaca_api.submit_order(buy_stock["symbol"], 5, 'buy', 'market', 'day')
 
-    if class_a_info["latestPrice"] > class_b_info["latestPrice"]:
-        alpaca_api.submit_order(class_a_info["symbol"], 5, 'sell', 'market', 'day')
-        alpaca_api.submit_order(class_b_info["symbol"], 5, 'buy', 'market', 'day')
-    else:
-        alpaca_api.submit_order(class_b_info["symbol"], 5, 'sell', 'market', 'day')
-        alpaca_api.submit_order(class_a_info["symbol"], 5, 'buy', 'market', 'day')
+    except IOError:
+        print(IOError)
+
 
 if __name__ == "__main__":
     main()
