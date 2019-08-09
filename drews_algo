@@ -1,0 +1,101 @@
+import alpaca_trade_api as tradeapi
+import requests
+import json
+
+# alpca api
+api = tradeapi.REST(
+    key_id='PKD460RLG1G4D7LFKGZ5',
+    secret_key='qYVDQVKe//lu4SOVc29tJpFCWw6v4SWQthKVPYZv',
+    base_url='https://paper-api.alpaca.markets'
+)
+
+
+#market clock
+def market_clock():
+    clock = api.get_clock()
+    print('The market is {}'.format('open.' if clock.is_open else 'closed.'))
+
+
+# our buying power
+def buying_power():
+    account = api.get_account()
+    print(('${} buying power'.format(account.buying_power)))
+
+# order template
+def order(symbol, quantity, postion):
+    api.submit_order(symbol=str(symbol),
+    qty=quantity,
+    side=postion,
+    type='market',
+    time_in_force='gtc'
+)
+
+
+# IEX Price finder
+def price(ticker):
+    iex = 'https://cloud.iexapis.com/stable/stock/{}/quote?token=sk_04eef91991b64fd5a484b044a2f8a3b1'.format(ticker)
+    res = requests.get(iex)
+    y = json.loads(res.text)
+    price = y['iexRealtimePrice']
+    return price
+
+
+# IEX ask finder
+def ask(ticker):
+    iex = 'https://cloud.iexapis.com/stable/stock/{}/quote?token=sk_04eef91991b64fd5a484b044a2f8a3b1'.format(ticker)
+    res = requests.get(iex)
+    y = json.loads(res.text)
+    price = y['iexAskPrice']
+
+    return price
+
+
+# IEX bid finder
+def bid(ticker):
+    iex = 'https://cloud.iexapis.com/stable/stock/{}/quote?token=sk_04eef91991b64fd5a484b044a2f8a3b1'.format(ticker)
+    res = requests.get(iex)
+    y = json.loads(res.text)
+    price = y['iexBidPrice']
+
+    return price
+
+
+# spread calculator based off bid and ask
+def buy_spread_calc(class_a, class_b):
+    buy_spread = ask(class_b) - bid(class_a)
+
+    return buy_spread
+
+
+# spread calculator based of price
+def spread_calc(class_a, class_b):
+    buy_spread = price(class_b) - price(class_a)
+
+    return buy_spread
+
+
+#sell short cut for market orders
+def sell_order(classab, qty):
+    order(classab, qty, 'sell')
+
+
+#buy short cut for market orders
+def buy_order(classab, qty):
+    order(classab, qty, 'buy')
+
+
+def auto_trader(class_a, class_b, sell_spread_price, buy_spread_price, qty):
+    if spread_calc(class_a, class_b) > sell_spread_price:
+        print(spread_calc(class_a, class_b))
+        sell_order(class_b, qty)
+        buy_order(class_a, qty)
+
+    elif spread_calc(class_a, class_b) < buy_spread_price:
+        print(spread_calc(class_a, class_b))
+        sell_order(class_a, qty)
+        buy_order(class_b, qty)
+    else:
+        print(spread_calc(class_a, class_b))
+
+
+auto_trader('RUSHA', 'RUSHB', 1.7, 1.35, 50)
