@@ -2,49 +2,102 @@ import alpaca_trade_api as alpaca
 import requests
 import json
 import time
+import websocket
 import asyncio
 
 alpaca_api = alpaca.REST(
-    key_id = 'PKYGK3F5QQ3NX7LIZKTP',
-    secret_key = 'bpaI7jMkLu1Knnocaz8fzWMBxRC8oxGIqnXGZSk0',
-    base_url = 'https://paper-api.alpaca.markets',
+    key_id='PKYGK3F5QQ3NX7LIZKTP',
+    secret_key='bpaI7jMkLu1Knnocaz8fzWMBxRC8oxGIqnXGZSk0',
+    base_url='https://paper-api.alpaca.markets',
 )
 
+goog_data = {
+    "sym": "GOOG",
+    "p": None,
+    "bp": None,
+    "ap": None,
+}
+
+googl_data = {
+    "sym": "GOOGL",
+    "p": None,
+    "bp": None,
+    "ap": None,
+}
 
 def main():
-    # done = None
-    print("Start Running")
-    while True:
+    print('Started Running')
+
+    # Subscribes WebSocket to stocks
+    ws = websocket.WebSocketApp("wss://socket.polygon.io/stocks", on_message=on_message, on_error=on_error,
+                                on_open=on_open,
+                                on_close=on_close)
+
+    ws.on_open = on_open
+    ws.run_forever()
+
+    '''while True:
+        # clock API returns the server time including
+        # the boolean flag for market open
         clock = alpaca_api.get_clock()
         now = clock.timestamp
+        print(stock_data)
         if clock.is_open:
-            # Do Algorithm Here
-            stock_info = asyncio.run(get_spread('GOOG', 'GOOGL'))
+            print(stock_data)'''
 
-            class_a_info = stock_info[0]
-            class_b_info = stock_info[1]
 
-            spread = class_a_info["latestPrice"] - class_b_info["latestPrice"]
+def on_message(ws, message):
+    stock_data = json.loads(message)
 
-            if spread is not None:
-                average_spread = asyncio.run(get_historical_data('GOOG', 'GOOGL'))
+    global goog_data
+    global googl_data
 
-                upper_bound = average_spread + (0.25 * average_spread)
-                lower_bound = average_spread - (0.25 * average_spread)
+    if stock_data[0]["ev"] == 'T':
+        goog_trade = next((stock for stock in stock_data if stock["sym"] == "GOOG"), goog_data)
+        if goog_trade["p"] is not None and goog_trade["p"] is not None:
+            goog_data["p"] = goog_trade["p"]
+            goog_data["p"] = goog_trade["p"]
+            print(goog_data)
+        googl_trade = next((stock for stock in stock_data if stock["sym"] == "GOOGL"), googl_data)
+        if googl_trade["p"] is not None and googl_trade["p"] is not None:
+            googl_data["p"] = googl_trade["p"]
+            googl_data["p"] = googl_trade["p"]
 
-                if spread > upper_bound:
-                    asyncio.run(hedge_position(class_a_info, class_b_info))
+    if stock_data[0]["ev"] == 'Q':
+        goog_quote = next((stock for stock in stock_data if stock["sym"] == "GOOG"), goog_data)
+        if goog_quote["bp"] is not None and goog_quote["ap"] is not None:
+            goog_data["bp"] = goog_quote["bp"]
+            goog_data["ap"] = goog_quote["ap"]
+            print(goog_data)
+        googl_quote = next((stock for stock in stock_data if stock["sym"] == "GOOGL"), googl_data)
+        if googl_quote["bp"] is not None and googl_quote["ap"] is not None:
+            googl_data["bp"] = googl_quote["bp"]
+            googl_data["ap"] = googl_quote["ap"]
 
-                elif spread < lower_bound:
-                    asyncio.run(hedge_position(class_b_info, class_a_info))
+        
 
-        time.sleep(0.333)
+
+def on_error(ws, error):
+    # ws.send('{"action":"unsubscribe","params":"Q.GOOG, Q.GOOGL"}')
+    print(error)
+
+
+def on_close(ws):
+    print("### closed ###")
+
+
+def on_open(ws):
+    ws.send('{"action":"auth","params":"ww_5fIE3P_S3jjhoYGqepjlsO5Dek0wER2sgDS"}')
+    ws.send('{"action":"subscribe","params":"Q.GOOG,T.GOOG,Q.GOOGL,T.GOOGL"}')
 
 
 async def get_spread(class_a, class_b):
     try:
-        class_a_api = 'https://cloud.iexapis.com/stable/stock/{}/quote?token=sk_a31d816214bb42f7902c3c63abe6909b'.format(class_a)
-        class_b_api = 'https://cloud.iexapis.com/stable/stock/{}/quote?token=sk_a31d816214bb42f7902c3c63abe6909b'.format(class_b)
+
+        class_a_api = 'https://cloud.iexapis.com/stable/stock/{}/quote?token=sk_a31d816214bb42f7902c3c63abe6909b'.format(
+            class_a)
+        class_b_api = 'https://cloud.iexapis.com/stable/stock/{}/quote?token=sk_a31d816214bb42f7902c3c63abe6909b'.format(
+            class_b)
 
         class_a_response = requests.get(class_a_api)
         class_b_response = requests.get(class_b_api)
@@ -88,8 +141,10 @@ async def get_spread(class_a, class_b):
 async def get_historical_data(class_a, class_b):
     try:
 
-        class_a_avg = 'https://cloud.iexapis.com/stable/stock/{}/stats/day200MovingAvg/?token=sk_a31d816214bb42f7902c3c63abe6909b'.format(class_a)
-        class_b_avg = 'https://cloud.iexapis.com/stable/stock/{}/stats/day200MovingAvg/?token=sk_a31d816214bb42f7902c3c63abe6909b'.format(class_b)
+        class_a_avg = 'https://cloud.iexapis.com/stable/stock/{}/stats/day200MovingAvg/?token=sk_a31d816214bb42f7902c3c63abe6909b'.format(
+            class_a)
+        class_b_avg = 'https://cloud.iexapis.com/stable/stock/{}/stats/day200MovingAvg/?token=sk_a31d816214bb42f7902c3c63abe6909b'.format(
+            class_b)
 
         class_a_response = requests.get(class_a_avg)
         class_b_response = requests.get(class_b_avg)
