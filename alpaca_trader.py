@@ -2,16 +2,142 @@ import alpaca_trade_api as tradeapi
 import requests
 import json
 import time
-import socket
 from datetime import date, timedelta
+import websocket
 
-# Alpaca api
 api = tradeapi.REST(
-    key_id='PKTC3DTGK63X5OTVOZVS',
-    secret_key='ii/nXagoCRvz2GWFncyId1F/gJCvukrMI1q/vkjg',
+    key_id='PKZXCTOAQZQZGJ0A1FCX',
+    secret_key='1AZA7ZUXo9X82xg9IeBOFtExwbvb5DZcmoIxHUt1',
     base_url='https://paper-api.alpaca.markets'
 )
 
+
+goog_data = {
+    "sym": "GOOG",
+    "p": None,
+    "bp": None,
+    "ap": None,
+}
+
+googl_data = {
+    "sym": "GOOGL",
+    "p": None,
+    "bp": None,
+    "ap": None,
+}
+
+def main():
+    print('Started Running')
+
+    # Creates WebSocket
+    ws = websocket.WebSocketApp("wss://alpaca.socket.polygon.io/stocks", on_message=on_message, on_open=on_open,
+                                on_close=on_close, on_error=on_error)
+    ws.run_forever()
+
+
+# Calls anytime GOOG's or GOOGL's price, ask price, or bid price changes
+def on_message(ws, message):
+    print(message)
+    stock_data = json.loads(message)
+
+    global goog_data
+    global googl_data
+
+    # Checks if message contains data of the last stock trade
+    if stock_data[0]["ev"] == 'T':
+        goog_trade = next((stock for stock in stock_data if stock["sym"] == "GOOG"), goog_data)
+        if goog_trade["p"] is not None and goog_trade["p"] is not None:
+            goog_data["p"] = goog_trade["p"]
+            goog_data["p"] = goog_trade["p"]
+            print(goog_data)
+
+        googl_trade = next((stock for stock in stock_data if stock["sym"] == "GOOGL"), googl_data)
+        if googl_trade["p"] is not None and googl_trade["p"] is not None:
+            googl_data["p"] = googl_trade["p"]
+            googl_data["p"] = googl_trade["p"]
+            print(googl_data)
+
+    # Checks if message contains stock quote data (ask price, bid price, etc...)
+    if stock_data[0]["ev"] == 'Q':
+        goog_quote = next((stock for stock in stock_data if stock["sym"] == "GOOG"), goog_data)
+        if goog_quote["bp"] is not None and goog_quote["ap"] is not None:
+            goog_data["bp"] = goog_quote["bp"]
+            goog_data["ap"] = goog_quote["ap"]
+            print(goog_data)
+
+        googl_quote = next((stock for stock in stock_data if stock["sym"] == "GOOGL"), googl_data)
+        if googl_quote["bp"] is not None and googl_quote["ap"] is not None:
+            googl_data["bp"] = googl_quote["bp"]
+            googl_data["ap"] = googl_quote["ap"]
+            print(googl_data)
+
+    market_is_open = True
+    stock_data_exists = check_stock_data()
+
+    if market_is_open and stock_data_exists:
+
+        # Run algorithm here
+        expensive_stock = None
+        cheaper_stock = None
+        if goog_data["p"] >= googl_data["p"]:
+            expensive_stock = goog_data
+            cheaper_stock = googl_data
+        else:
+            expensive_stock = googl_data
+            cheaper_stock = goog_data
+        spread = expensive_stock["p"] - cheaper_stock["p"]
+        ratio = 1 / 1
+        #print(spread)
+        # open_position()
+        # close_position()
+
+
+def on_open(ws):
+    ws.send('{"action":"auth","params":"AKK5WUTECIGM1G8XTN3C"}')
+    ws.send('{"action":"subscribe","params":"Q.GOOG,T.GOOG,Q.GOOGL,T.GOOGL"}')
+
+
+def on_close(ws):
+    print("### closed ###")
+
+
+def on_error(ws, error):
+    # ws.send('{"action":"unsubscribe","params":"Q.GOOG, Q.GOOGL"}')
+    print(error)
+
+
+# Checks if the status of the market
+def check_market():
+    try:
+        clock = api.get_clock()
+        if clock.is_open:
+            return True
+        else:
+            return False
+    except Exception as error:
+        print(error)
+        return False
+
+
+
+def check_stock_data():
+    if goog_data["p"] is not None and goog_data["bp"] is not None and goog_data["ap"] is not None and googl_data[
+        "p"] is not None and googl_data["bp"] is not None and googl_data["ap"] is not None:
+        return True
+    else:
+        return False
+
+
+# def open_position(cheaper_stock, expensive_stock, spread, ):
+
+
+# def close_position():
+
+
+#if __name__ == "__main__":
+#    main()
+
+#main()
 
 # market clock
 def market_clock():
@@ -21,11 +147,6 @@ def market_clock():
         return True
     else:
         return False
-
-
-# find out how to use sockets
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
 
 # our buying power
 def buying_power():
@@ -80,14 +201,14 @@ def bid(ticker):
 
 # spread calculator based off bid and ask CREDIT
 def credit_spread_calc(cheaper_class, expensive_class):
-    sell_spread = bid(expensive_class) - ask(cheaper_class)
+    sell_spread = ask(expensive_class) - bid(cheaper_class)
 
     return sell_spread
 
 
 # spread calculator based off bid and ask DEBT
 def debit_spread_calc(cheaper_class, expensive_class):
-    buy_spread = ask(expensive_class) - bid(cheaper_class)
+    buy_spread = bid(expensive_class) - ask(cheaper_class)
 
     return buy_spread
 
@@ -107,66 +228,6 @@ def sell_order(classab, qty):
 # buy short-cut for market orders
 def buy_order(classab, qty):
     order(classab, qty, 'buy')
-
-
-# sends orders based on bid/ask using limits needs work (we need to find out how to cancel orders) and error handling
-def lim_order_placer(cheaper_class, expensive_class, sell_spread_price, buy_spread_price, qty_e, qty_c, position):
-    if position == 'sell':
-        while True:
-            print(credit_spread_calc(cheaper_class, expensive_class))
-            if credit_spread_calc(cheaper_class, expensive_class) > sell_spread_price:
-                print(round((spread_calc(cheaper_class, expensive_class)), 2))
-                lim_e = bid(expensive_class)
-                lim_order(expensive_class, qty_e, 'sell', lim_e)
-                lim_c = ask(cheaper_class)
-                lim_order(cheaper_class, qty_c, 'buy', lim_c)
-                try:
-                    if int(api.get_position(expensive_class).qty) != 1:
-                        lim_e = bid(expensive_class)*.9
-                        lim_order(expensive_class, qty_e, 'sell', lim_e)
-                except Exception as e:
-                    lim_e = bid(expensive_class) * .9
-                    lim_order(expensive_class, qty_e, 'sell', lim_e)
-                try:
-                    if int(api.get_position(cheaper_class).qty) != 1:
-                        lim_e = ask(cheaper_class)*1.1
-                        lim_order(cheaper_class, qty_e, 'buy', lim_e)
-                except Exception as e:
-                    if int(api.get_position(cheaper_class).qty) != 1:
-                        lim_e = ask(cheaper_class) * 1.1
-                        lim_order(cheaper_class, qty_e, 'buy', lim_e)
-                print('Credit Spread Bought CHECK ORDER BOOK')
-                break
-    if position == 'buy':
-        while True:
-            print(credit_spread_calc(cheaper_class, expensive_class))
-            if credit_spread_calc(cheaper_class, expensive_class) < buy_spread_price:
-                print(round((spread_calc(cheaper_class, expensive_class)), 2))
-                lim_e = ask(expensive_class)
-                lim_order(expensive_class, qty_e, 'buy', lim_e)
-                lim_c = bid(cheaper_class)
-                lim_order(cheaper_class, qty_c, 'sell', lim_c)
-                try:
-                    if int(api.get_position(expensive_class).qty) != 1:
-                        lim_c = bid(expensive_class)*.96
-                        lim_order(expensive_class, qty_c, 'sell', lim_c)
-                except Exception as e:
-                    lim_e = bid(expensive_class) * .96
-                    lim_order(expensive_class, qty_e, 'sell', lim_e)
-                try:
-                    if int(api.get_position(cheaper_class).qty) != 1:
-                        lim_e = ask(cheaper_class)*1.04
-                        lim_order(cheaper_class, qty_e, 'buy', lim_e)
-                except Exception as e:
-                    if int(api.get_position(cheaper_class).qty) != 1:
-                        lim_e = ask(cheaper_class) * 1.04
-                        lim_order(cheaper_class, qty_e, 'buy', lim_e)
-
-                print('Credit Spread Bought')
-                break
-
-
-lim_order_placer('GOOG', 'GOOGL', .26, 1, 1, 'sell')
 
 
 def get_historical_data(cheaper_class, expensive_class):
@@ -222,14 +283,14 @@ def get_historical_data(cheaper_class, expensive_class):
 def open_trade(cheaper_class, expensive_class, sell_spread_price, buy_spread_price, qty_e, qty_c):
     while True:
 
-        if spread_calc(cheaper_class, expensive_class) > sell_spread_price:
+        if credit_spread_calc(cheaper_class, expensive_class) > sell_spread_price:
             print(round((spread_calc(cheaper_class, expensive_class)), 2))
             sell_order(expensive_class, qty_e)
             buy_order(cheaper_class, qty_c)
             print('Credit Spread Bought')
             break
 
-        elif spread_calc(cheaper_class, expensive_class) < buy_spread_price - 4:
+        elif debit_spread_calc(cheaper_class, expensive_class) < buy_spread_price :
             print(round((spread_calc(cheaper_class, expensive_class)), 2))
             sell_order(cheaper_class, qty_c)
             buy_order(expensive_class, qty_e)
@@ -287,4 +348,104 @@ def spread_trader(cheaper_class, expensive_class, sell_spread_price, buy_spread_
         close_trade(cheaper_class, expensive_class, sell_spread_price, buy_spread_price, qty_e, qty_c)
 
 
-# spread_trader('UA', 'UAA', 2.00, 1.9, 10)
+# sends orders based on bid/ask using limits needs work (we need to find out how to cancel orders) and error handling
+def lim_order_placer(cheaper_class, expensive_class, qty_e, qty_c, position):
+    if position == 'sell':
+        lim_e = ask(expensive_class)
+        lim_order(expensive_class, qty_e, 'sell', lim_e)
+        lim_c = bid(cheaper_class)
+        lim_order(cheaper_class, qty_c, 'buy', lim_c)
+        print('Order started')
+        try:
+            if int(api.get_position(expensive_class).qty) != qty_e:
+                api.cancel_all_orders()
+                lim_e = ask(expensive_class) - spread_calc(cheaper_class, expensive_class) * .1
+                lim_order(expensive_class, (qty_e - api.get_position(expensive_class)).qty, 'sell', lim_e)
+        except Exception as e:
+            api.cancel_all_orders()
+            lim_e = ask(expensive_class) - spread_calc(cheaper_class, expensive_class) * .1
+            lim_order(expensive_class, qty_e, 'sell', lim_e)
+        try:
+            if int(api.get_position(cheaper_class).qty) != qty_c:
+                api.cancel_all_orders()
+                lim_c = bid(cheaper_class) + spread_calc(cheaper_class, expensive_class) * .1
+                lim_order(cheaper_class, (qty_c - api.get_position(expensive_class)).qty, 'buy', lim_c)
+        except Exception as e:
+            api.cancel_all_orders()
+            lim_c = bid(cheaper_class) + spread_calc(cheaper_class, expensive_class) * .1
+            lim_order(cheaper_class, qty_c, 'buy', lim_c)
+        print('Credit Spread Bought CHECK ORDER BOOK')
+
+    if position == 'buy':
+        lim_e = bid(expensive_class)
+        lim_order(expensive_class, qty_e, 'buy', lim_e)
+        lim_c = ask(cheaper_class)
+        lim_order(cheaper_class, qty_c, 'sell', lim_c)
+        print('Order started')
+        try:
+            if int(api.get_position(expensive_class).qty) != qty_e:
+                api.cancel_all_orders()
+                lim_e = bid(expensive_class) + spread_calc(cheaper_class, expensive_class) * .1
+                lim_order(expensive_class, (qty_e - api.get_position(expensive_class)).qty, 'buy', lim_e)
+        except Exception as e:
+            api.cancel_all_orders()
+            lim_e = bid(expensive_class) + spread_calc(cheaper_class, expensive_class) * .1
+            lim_order(expensive_class, qty_e, 'buy', lim_e)
+        try:
+            if int(api.get_position(cheaper_class).qty) != qty_c:
+                api.cancel_all_orders()
+                lim_c = ask(cheaper_class) - spread_calc(cheaper_class, expensive_class) * .1
+                lim_order(cheaper_class, (qty_c - api.get_position(expensive_class)).qty, 'sell', lim_c)
+        except Exception as e:
+            api.cancel_all_orders()
+            lim_c = ask(cheaper_class) - spread_calc(cheaper_class, expensive_class) * .1
+            lim_order(cheaper_class, qty_c, 'sell', lim_c)
+        print('Debit Spread Bought CHECK ORDER BOOK')
+
+
+def open_trader_lim(cheaper_class, expensive_class, sell_spread_price, buy_spread_price, qty_e, qty_c):
+    while True:
+        if credit_spread_calc(cheaper_class, expensive_class) > sell_spread_price:
+            lim_order_placer(cheaper_class,expensive_class, qty_e, qty_c, 'sell')
+            break
+
+        elif debit_spread_calc(cheaper_class, expensive_class) < buy_spread_price:
+            lim_order_placer(cheaper_class, expensive_class, qty_e, qty_c, 'buy')
+            break
+
+        else:
+            print('credit spread:' + credit_spread_calc(cheaper_class, expensive_class), 'debit spread:' +
+                  debit_spread_calc(cheaper_class, expensive_class))
+
+
+def close_trader_lim(cheaper_class, expensive_class, sell_spread_price, buy_spread_price, qty_e, qty_c):
+    if (int(api.get_position(expensive_class).qty)) > 0:
+        while True:
+            print(round((credit_spread_calc(cheaper_class, expensive_class)), 2))
+            print('no spread bought')
+            if credit_spread_calc(cheaper_class, expensive_class) > sell_spread_price:
+                lim_order_placer(cheaper_class, expensive_class, qty_e, qty_c, 'sell')
+                break
+
+    elif (int(api.get_position(cheaper_class).qty)) > 0:
+        while True:
+            print(round((debit_spread_calc(cheaper_class, expensive_class)), 2))
+            print('no spread bought')
+            if debit_spread_calc(cheaper_class, expensive_class) < buy_spread_price:
+                lim_order_placer(cheaper_class, expensive_class, qty_e, qty_c, 'buy')
+                break
+
+
+def limit_spread_trader(cheaper_class, expensive_class, sell_spread_price, buy_spread_price, qty_e, qty_c):
+    while True:
+        open_trader_lim(cheaper_class, expensive_class, sell_spread_price, buy_spread_price, qty_e, qty_c)
+        time.sleep(7)
+        close_trader_lim(cheaper_class, expensive_class, sell_spread_price, buy_spread_price, qty_e, qty_c)
+
+
+
+
+limit_spread_trader('GOOG', 'GOOGL', 1.5, 0.3, 1, 1)
+#spread_trader('LEN.B','LEN', 10.2, 9.8, 4, 3)
+#need websocket
+
