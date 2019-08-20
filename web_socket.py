@@ -7,14 +7,14 @@ from multiprocessing import Process
 import time
 
 alpaca_api = alpaca.REST(
-    key_id='PKK6KCNM8934NJW6JNUG',
-    secret_key='alXAfxljGTWkSOyeCONFQvXAxdWhKbDL8fmRgH7H',
+    key_id='PKT95IYTT39JEFETIJP7',
+    secret_key='xb5O2safuUJnrR5Ox1JZF8pfF6/oEeFUO0k1q8NM',
     base_url='https://paper-api.alpaca.markets',
 )
 
 conn = StreamConn(
-    key_id="PKK6KCNM8934NJW6JNUG",
-    secret_key="alXAfxljGTWkSOyeCONFQvXAxdWhKbDL8fmRgH7H",
+    key_id="PKT95IYTT39JEFETIJP7",
+    secret_key="xb5O2safuUJnrR5Ox1JZF8pfF6/oEeFUO0k1q8NM",
     base_url="https://paper-api.alpaca.markets",
 )
 
@@ -105,9 +105,9 @@ def get_account():
     try:
         account_info = alpaca_api.get_account()
         account = {
-            "buyingPower": account_info.buying_power,
-            "portfolioValue": account_info.portfolio_value,
-            "regTBuyingPower": account_info.regt_buying_power,
+            "buyingPower": float(account_info.buying_power),
+            "portfolioValue": float(account_info.portfolio_value),
+            "regTBuyingPower": float(account_info.regt_buying_power),
         }
         return account
     except Exception as error:
@@ -172,9 +172,9 @@ def account_updates():
         try:
             account_info = alpaca_api.get_account()
             account = {
-                "buyingPower": account_info.buying_power,
-                "portfolioValue": account_info.portfolio_value,
-                "regTBuyingPower": account_info.regt_buying_power,
+                "buyingPower": float(account_info.buying_power),
+                "portfolioValue": float(account_info.portfolio_value),
+                "regTBuyingPower": float(account_info.regt_buying_power),
             }
         except Exception as error:
             print(error)
@@ -206,6 +206,7 @@ def position_updates():
             print(error)
 
         time.sleep(0.5)
+        print(positions)
 
 
 def stock_data_updates():
@@ -266,13 +267,20 @@ def on_message(ws, message):
         spread = expensive_class["p"] - (cheaper_class["p"] * ratio)
 
         if spread > 1.25:
-            open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit', ratio=ratio)
+            filtered_positions = list(
+                filter(lambda position: (position["symbol"] == expensive_class["sym"] and int(position["qty"]) < 0), positions))
+            filtered_orders = list(
+                filter(lambda order: (order["sym"] == expensive_class["sym"] and int(order["side"]) == "sell"), orders))
+            if len(filtered_positions) < 1 and len(filtered_orders):
+                open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit', ratio=ratio)
         elif spread < 0.75:
-            open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit', ratio=ratio)
-        elif 0.95 < spread < 1.10:
-            close_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit', ratio=ratio)
-        elif .90 < spread < 1.05:
-            close_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit', ratio=ratio)
+            filtered_positions = list(
+                filter(lambda position: (position["symbol"] == expensive_class["sym"] and int(position["qty"]) < 0),
+                       positions))
+            filtered_orders = list(
+                filter(lambda order: (order["sym"] == expensive_class["sym"] and int(order["side"]) == "buy"), orders))
+            if len(filtered_positions) < 1 and len(filtered_orders) < 1:
+                open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit', ratio=ratio)
 
 
 def on_error(ws, error):
@@ -311,16 +319,19 @@ def check_stock_data():
 
 def open_position(expensive_class, cheaper_class, side, ratio):
     # Figure out how to stop the program from opening too many positions
-    if side == "credit":
-        if account["buyingPower"] >= cheaper_class["ap"]:  # Ask Drew what the cost of the trade is
-            alpaca_api.submit_order(expensive_class, qty=1, side='sell', type='limit', limit_price=expensive_class["bp"], time_in_force='gtc')
-            alpaca_api.submit_order(cheaper_class, qty=ratio, side='buy', type='limit', limit_price=cheaper_class["ap"], time_in_force='gtc')
-            print('Credit Spread Bought')
-    elif side == "debit":
-        if account["buyingPower"] >= expensive_class["ap"]:  # Ask Drew what the cost of the trade is
-            alpaca_api.submit_order(cheaper_class, qty=ratio, side='sell', type='limit', limit_price=cheaper_class["ap"], time_in_force='gtc')
-            alpaca_api.submit_order(expensive_class, qty=1, side='buy', type='limit', limit_price=expensive_class["bp"], time_in_force='gtc')
-            print('Debit Spread Bought')
+    try:
+        if side == "credit":
+            if account["buyingPower"] >= cheaper_class["ap"]:  # Ask Drew what the cost of the trade is
+                alpaca_api.submit_order(expensive_class["sym"], qty=1, side='sell', type='limit', limit_price=expensive_class["ap"], time_in_force='gtc')
+                alpaca_api.submit_order(cheaper_class["sym"], qty=int(ratio), side='buy', type='limit', limit_price=cheaper_class["bp"], time_in_force='gtc')
+                print('Credit Spread Bought')
+        elif side == "debit":
+            if account["buyingPower"] >= expensive_class["ap"]:  # Ask Drew what the cost of the trade is
+                alpaca_api.submit_order(cheaper_class["sym"], qty=int(ratio), side='sell', type='limit', limit_price=cheaper_class["ap"], time_in_force='gtc')
+                alpaca_api.submit_order(expensive_class["sym"], qty=1, side='buy', type='limit', limit_price=expensive_class["bp"], time_in_force='gtc')
+                print('Debit Spread Bought')
+    except Exception as error:
+        print(error)
 
 
 def close_position(expensive_class, cheaper_class, side, ratio):
