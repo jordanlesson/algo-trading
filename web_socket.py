@@ -4,6 +4,7 @@ import alpaca_trade_api as alpaca
 from alpaca_trade_api import StreamConn
 from threading import Thread
 from multiprocessing import Process
+import time
 
 alpaca_api = alpaca.REST(
     key_id='PKK6KCNM8934NJW6JNUG',
@@ -34,45 +35,84 @@ googl_data = {
 account = {
     "buyingPower": None,
     "portfolioValue": None,
-    "RegTBuyingPower": None,
+    "regTBuyingPower": None,
 }
 
-positions = {}
+positions = []
 
 orders = []
 
 
-@conn.on(r'.*')
-async def on_data(conn, channel, data):
-    print(channel)
-    print(data)
-
-
-@conn.on(r'^account_updates$')
+# Alpaca has not made account updates useful yet
+'''@conn.on(r'account_updates')
 async def on_account_updates(conn, channel, account):
-    print('account', account)
+    print('account', account)'''
 
 
-@conn.on(r'^trade_updates$')
+@conn.on(r'trade_updates')
 async def on_trade_updates(conn, channel, data):
-    print(data)
+
+    global orders
+
+    order_data = data
+    order = order_data.order
+    packaged_order = {
+            "id": order["id"],
+            "symbol": order["symbol"],
+            "limitPrice": order["limit_price"],
+            "orderType": order["order_type"],
+            "qty": order["qty"],
+            "filled_qty": order["filled_qty"],
+            "side": order["side"],
+            "timeInForce": order["time_in_force"],
+            "status": order["status"],
+        }
+
+    if order_data.event == "new":
+        orders.append(packaged_order)
+    elif order_data.event == "fill":
+        orders = [ordr for ordr in orders if ordr["id"] != packaged_order["id"]]
+    elif order_data.event == "partial_fill":
+        orders = [ordr for ordr in orders if ordr["id"] != packaged_order["id"]]
+        orders.append(packaged_order)
+    elif order_data.event == "canceled" or order_data.event == "expired":
+        orders = [ordr for ordr in orders if ordr["id"] != packaged_order["id"]]
 
 
 def main():
+    # Local versions of our account data, current positions, and awaiting orders
+    global account
     global positions
     global orders
 
     # Retrieves initial account data before running algorithm
     # TODO: add a function that retrieves the historical data of GOOG and GOOGL
+    account = get_account()
     positions = get_positions()
     orders = get_orders()
 
-    if positions is not None or orders is not None:
-        # Run Algorithm Here
-        Thread(target=stock_data_update).start()
+    if account is not None and positions is not None and orders is not None:
+        # Run Stream Connection Functions
+        Thread(target=stock_data_updates).start()
         Thread(target=account_updates).start()
+        Thread(target=position_updates).start()
+        Thread(target=order_updates).start()
     else:
-        print("Error Occurred: Either a failure in fetching account positions or orders")
+        print("Error Occurred: Either a failure in fetching account data, positions, or orders")
+
+
+def get_account():
+    try:
+        account_info = alpaca_api.get_account()
+        account = {
+            "buyingPower": account_info.buying_power,
+            "portfolioValue": account_info.portfolio_value,
+            "regTBuyingPower": account_info.regt_buying_power,
+        }
+        return account
+    except Exception as error:
+        print(error)
+        return None
 
 
 def get_positions():
@@ -121,11 +161,54 @@ def get_orders():
         return None
 
 
+def order_updates():
+    conn.run(['trade_updates'])
+
+
 def account_updates():
-    conn.run(['account_updates', 'trade_updates'])
+    global account
+
+    while True:
+        try:
+            account_info = alpaca_api.get_account()
+            account = {
+                "buyingPower": account_info.buying_power,
+                "portfolioValue": account_info.portfolio_value,
+                "regTBuyingPower": account_info.regt_buying_power,
+            }
+        except Exception as error:
+            print(error)
+        time.sleep(0.5)
 
 
-def stock_data_update():
+def position_updates():
+    global positions
+
+    current_positions = []
+
+    while True:
+        try:
+            position_list = alpaca_api.list_positions()
+            if len(position_list) != 0:
+                for position in position_list:
+                    current_positions.append({
+                        "symbol": position.symbol,
+                        "qty": position.qty,
+                        "side": position.side,
+                        "marketValue": position.market_value,
+                        "currentPrice": position.current_price,
+                    })
+                positions = current_positions
+            else:
+                positions = positions
+
+        except Exception as error:
+            print(error)
+
+        time.sleep(0.5)
+
+
+def stock_data_updates():
     print('Started Running')
 
     # Subscribes WebSocket to stocks
@@ -134,19 +217,6 @@ def stock_data_update():
 
     ws.on_open = on_open
     ws.run_forever()
-
-    '''while True:
-        # clock API returns the server time including
-        # the boolean flag for market open
-        clock = alpaca_api.get_clock()
-        now = clock.timestamp
-        print(stock_data)
-        if clock.is_open:
-            print(stock_data)'''
-
-
-def on_data(conn, channel, data):
-    print(data)
 
 
 def on_message(ws, message):
@@ -199,6 +269,10 @@ def on_message(ws, message):
             open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit', ratio=ratio)
         elif spread < 0.75:
             open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit', ratio=ratio)
+        elif 0.95 < spread < 1.10:
+            close_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit', ratio=ratio)
+        elif .90 < spread < 1.05:
+            close_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit', ratio=ratio)
 
 
 def on_error(ws, error):
@@ -249,8 +323,18 @@ def open_position(expensive_class, cheaper_class, side, ratio):
             print('Debit Spread Bought')
 
 
-def close_position():
+def close_position(expensive_class, cheaper_class, side, ratio):
     print("CLOSE POSITION")
+    if side == "credit":
+        if account["buyingPower"] >= (cheaper_class["ap"] * ratio):  # Ask Drew what the cost of the trade is
+            alpaca_api.submit_order(expensive_class, qty=1, side='sell', type='limit', limit_price=expensive_class["bp"], time_in_force='gtc')
+            alpaca_api.submit_order(cheaper_class, qty=ratio, side='buy', type='limit', limit_price=cheaper_class["ap"], time_in_force='gtc')
+            print('Debit Spread Closed')
+    elif side == "debit":
+        if account["buyingPower"] >= expensive_class["ap"]:  # Ask Drew what the cost of the trade is
+            alpaca_api.submit_order(cheaper_class, qty=ratio, side='sell', type='limit', limit_price=cheaper_class["ap"], time_in_force='gtc')
+            alpaca_api.submit_order(expensive_class, qty=1, side='buy', type='limit', limit_price=expensive_class["bp"], time_in_force='gtc')
+            print('Credit Spread Closed')
 
 
 if __name__ == '__main__':
