@@ -42,7 +42,6 @@ positions = []
 
 orders = []
 
-
 # Alpaca has not made account updates useful yet
 '''@conn.on(r'account_updates')
 async def on_account_updates(conn, channel, account):
@@ -51,25 +50,35 @@ async def on_account_updates(conn, channel, account):
 
 @conn.on(r'trade_updates')
 async def on_trade_updates(conn, channel, data):
-
     global orders
 
     order_data = data
     order = order_data.order
     packaged_order = {
-            "id": order["id"],
-            "symbol": order["symbol"],
-            "limitPrice": order["limit_price"],
-            "orderType": order["order_type"],
-            "qty": order["qty"],
-            "filled_qty": order["filled_qty"],
-            "side": order["side"],
-            "timeInForce": order["time_in_force"],
-            "status": order["status"],
-        }
+        "id": order["id"],
+        "symbol": order["symbol"],
+        "limitPrice": order["limit_price"],
+        "orderType": order["order_type"],
+        "qty": order["qty"],
+        "filled_qty": order["filled_qty"],
+        "side": order["side"],
+        "timeInForce": order["time_in_force"],
+        "status": order["status"],
+    }
 
     if order_data.event == "new":
         orders.append(packaged_order)
+        time.sleep(10.0)
+        try:
+            for ordr in orders:
+                if ordr["id"] == packaged_order["id"]:
+                    if packaged_order["side"] == "buy":
+                        print("Bid Increased")
+                    elif packaged_order["side"] == "sell":
+                        print("Ask Increased")
+                    alpaca_api.cancel_order(packaged_order["id"])  # Cancels order if it still hasn't executed after 2 secs
+        except Exception as error:
+            print(error)
     elif order_data.event == "fill":
         orders = [ordr for ordr in orders if ordr["id"] != packaged_order["id"]]
     elif order_data.event == "partial_fill":
@@ -200,13 +209,12 @@ def position_updates():
                     })
                 positions = current_positions
             else:
-                positions = positions
+                positions = []
 
         except Exception as error:
             print(error)
 
         time.sleep(0.5)
-        print(positions)
 
 
 def stock_data_updates():
@@ -249,7 +257,7 @@ def on_message(ws, message):
             googl_data["ap"] = googl_quote["ap"]
 
     market_is_open = True
-    stock_data_exists = check_stock_data()
+    stock_data_exists = True
 
     if market_is_open and stock_data_exists:
         # Run Algorithm Here
@@ -264,22 +272,26 @@ def on_message(ws, message):
             expensive_class = googl_data
             cheaper_class = goog_data
 
-        spread = expensive_class["p"] - (cheaper_class["p"] * ratio)
+        credit_spread = expensive_class["ap"] - (cheaper_class["bp"] * ratio)
+        debit_spread = expensive_class["bp"] - (cheaper_class["ap"] * ratio)
 
-        if spread > 1.25:
-            filtered_positions = list(
-                filter(lambda position: (position["symbol"] == expensive_class["sym"] and int(position["qty"]) < 0), positions))
-            filtered_orders = list(
-                filter(lambda order: (order["sym"] == expensive_class["sym"] and int(order["side"]) == "sell"), orders))
-            if len(filtered_positions) < 1 and len(filtered_orders):
+        if credit_spread > 1.50:
+
+            position_exists = check_positions(expensive_class=expensive_class, side="credit")
+            order_exists = check_orders(expensive_class=expensive_class, side="credit")
+            print(f'Position Exists: {position_exists}')
+            print(f'Order Exists: {order_exists}')
+
+            if not order_exists and not position_exists:
+
                 open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit', ratio=ratio)
-        elif spread < 0.75:
-            filtered_positions = list(
-                filter(lambda position: (position["symbol"] == expensive_class["sym"] and int(position["qty"]) < 0),
-                       positions))
-            filtered_orders = list(
-                filter(lambda order: (order["sym"] == expensive_class["sym"] and int(order["side"]) == "buy"), orders))
-            if len(filtered_positions) < 1 and len(filtered_orders) < 1:
+        elif debit_spread < 0.50:
+
+            position_exists = check_positions(expensive_class=expensive_class, side="debit")
+            order_exists = check_orders(expensive_class=expensive_class, side="debit")
+
+            if not order_exists and not position_exists:
+
                 open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit', ratio=ratio)
 
 
@@ -317,18 +329,68 @@ def check_stock_data():
         return False
 
 
+def check_positions(expensive_class, side):
+    if len(positions) >= 1:
+        return True
+        '''if side == "credit":
+            for position in positions:
+                position_exists = None
+                if position["symbol"] == expensive_class["sym"] and position["side"] == "short":
+                    position_exists = True
+                else:
+                    position_exists = False
+            return position_exists
+        elif side == "debit":
+            for position in positions:
+                position_exists = None
+                if position["symbol"] == expensive_class["sym"] and position["side"] == "long":
+                    position_exists = True
+                else:
+                    position_exists = False
+            return position_exists'''
+    else:
+        return False
+
+
+def check_orders(expensive_class, side):
+    if len(orders) >= 1:
+        return True
+        '''if side == "credit":
+            order_exists = None
+            for order in orders:
+                if order["symbol"] == expensive_class["sym"] and order["side"] == "sell":
+                    order_exists = True
+                else:
+                    order_exists = False
+            return order_exists
+        elif side == "debit":
+            order_exists = None
+            for order in orders:
+                if order["symbol"] == expensive_class["sym"] and order["side"] == "buy":
+                    order_exists = True
+                else:
+                    order_exists = False
+            return order_exists'''
+    else:
+        return False
+
+
 def open_position(expensive_class, cheaper_class, side, ratio):
     # Figure out how to stop the program from opening too many positions
     try:
         if side == "credit":
-            if account["buyingPower"] >= cheaper_class["ap"]:  # Ask Drew what the cost of the trade is
-                alpaca_api.submit_order(expensive_class["sym"], qty=1, side='sell', type='limit', limit_price=expensive_class["ap"], time_in_force='gtc')
-                alpaca_api.submit_order(cheaper_class["sym"], qty=int(ratio), side='buy', type='limit', limit_price=cheaper_class["bp"], time_in_force='gtc')
+            if account["buyingPower"] >= cheaper_class["ap"] + expensive_class["bp"]:
+                alpaca_api.submit_order(expensive_class["sym"], qty=1, side='sell', type='limit',
+                                        limit_price=expensive_class["ap"] - .60, time_in_force='gtc')
+                alpaca_api.submit_order(cheaper_class["sym"], qty=int(ratio), side='buy', type='limit',
+                                        limit_price=cheaper_class["bp"] + .60, time_in_force='gtc')
                 print('Credit Spread Bought')
         elif side == "debit":
-            if account["buyingPower"] >= expensive_class["ap"]:  # Ask Drew what the cost of the trade is
-                alpaca_api.submit_order(cheaper_class["sym"], qty=int(ratio), side='sell', type='limit', limit_price=cheaper_class["ap"], time_in_force='gtc')
-                alpaca_api.submit_order(expensive_class["sym"], qty=1, side='buy', type='limit', limit_price=expensive_class["bp"], time_in_force='gtc')
+            if account["buyingPower"] >= expensive_class["ap"] + cheaper_class["bp"]:
+                alpaca_api.submit_order(cheaper_class["sym"], qty=int(ratio), side='sell', type='limit',
+                                        limit_price=cheaper_class["ap"] - .60, time_in_force='gtc')
+                alpaca_api.submit_order(expensive_class["sym"], qty=1, side='buy', type='limit',
+                                        limit_price=expensive_class["bp"] + .60, time_in_force='gtc')
                 print('Debit Spread Bought')
     except Exception as error:
         print(error)
@@ -338,13 +400,17 @@ def close_position(expensive_class, cheaper_class, side, ratio):
     print("CLOSE POSITION")
     if side == "credit":
         if account["buyingPower"] >= (cheaper_class["ap"] * ratio):  # Ask Drew what the cost of the trade is
-            alpaca_api.submit_order(expensive_class, qty=1, side='sell', type='limit', limit_price=expensive_class["bp"], time_in_force='gtc')
-            alpaca_api.submit_order(cheaper_class, qty=ratio, side='buy', type='limit', limit_price=cheaper_class["ap"], time_in_force='gtc')
+            alpaca_api.submit_order(expensive_class, qty=1, side='sell', type='limit',
+                                    limit_price=expensive_class["bp"], time_in_force='gtc')
+            alpaca_api.submit_order(cheaper_class, qty=ratio, side='buy', type='limit', limit_price=cheaper_class["ap"],
+                                    time_in_force='gtc')
             print('Debit Spread Closed')
     elif side == "debit":
         if account["buyingPower"] >= expensive_class["ap"]:  # Ask Drew what the cost of the trade is
-            alpaca_api.submit_order(cheaper_class, qty=ratio, side='sell', type='limit', limit_price=cheaper_class["ap"], time_in_force='gtc')
-            alpaca_api.submit_order(expensive_class, qty=1, side='buy', type='limit', limit_price=expensive_class["bp"], time_in_force='gtc')
+            alpaca_api.submit_order(cheaper_class, qty=ratio, side='sell', type='limit',
+                                    limit_price=cheaper_class["ap"], time_in_force='gtc')
+            alpaca_api.submit_order(expensive_class, qty=1, side='buy', type='limit', limit_price=expensive_class["bp"],
+                                    time_in_force='gtc')
             print('Credit Spread Closed')
 
 
