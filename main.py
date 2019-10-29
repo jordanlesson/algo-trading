@@ -3,21 +3,26 @@ import json
 import alpaca_trade_api as alpaca
 from alpaca_trade_api import StreamConn
 from threading import Thread
+from models.order import Order
+from models.hedged_order import HedgedOrder
 from multiprocessing import Process
 import time
 
+# Declaration of Alpaca API
 alpaca_api = alpaca.REST(
     key_id='PKT95IYTT39JEFETIJP7',
     secret_key='xb5O2safuUJnrR5Ox1JZF8pfF6/oEeFUO0k1q8NM',
     base_url='https://paper-api.alpaca.markets',
 )
 
+# Declaration of stream
 conn = StreamConn(
     key_id="PKT95IYTT39JEFETIJP7",
     secret_key="xb5O2safuUJnrR5Ox1JZF8pfF6/oEeFUO0k1q8NM",
     base_url="https://paper-api.alpaca.markets",
 )
 
+# Declaration of Google Class C data (empty)
 goog_data = {
     "sym": "GOOG",
     "p": None,
@@ -25,6 +30,7 @@ goog_data = {
     "ap": None,
 }
 
+# Declaration of Google Class A data (empty)
 googl_data = {
     "sym": "GOOGL",
     "p": None,
@@ -32,14 +38,15 @@ googl_data = {
     "ap": None,
 }
 
+# Declaration of Alpaca account data (empty)
 account = {
     "buyingPower": None,
     "portfolioValue": None,
     "regTBuyingPower": None,
 }
 
+# Declaration of our positions and orders (empty)
 positions = []
-
 orders = []
 
 # Alpaca has not made account updates useful yet
@@ -48,44 +55,42 @@ async def on_account_updates(conn, channel, account):
     print('account', account)'''
 
 
+# Function that is called whenever an order update occurs (new orders, fills, partial fills, cancels, etc...)
 @conn.on(r'trade_updates')
 async def on_trade_updates(conn, channel, data):
     global orders
 
     order_data = data
     order = order_data.order
-    packaged_order = {
-        "id": order["id"],
-        "symbol": order["symbol"],
-        "limitPrice": order["limit_price"],
-        "orderType": order["order_type"],
-        "qty": order["qty"],
-        "filled_qty": order["filled_qty"],
-        "side": order["side"],
-        "timeInForce": order["time_in_force"],
-        "status": order["status"],
-    }
+    packaged_order = Order(order["id"], order["symbol"], order["limit_price"], order["order_type"], order["qty"],
+                           order["filled_qty"], order["side"], order["time_in_force"], order["status"])
 
     if order_data.event == "new":
         orders.append(packaged_order)
-        time.sleep(10.0)
+        print("Timer Started")
+        time.sleep(5.0)
         try:
-            for ordr in orders:
+            print("Time Elapsed 5 Seconds")
+            '''for ordr in orders:
                 if ordr["id"] == packaged_order["id"]:
+                    alpaca_api.cancel_order(
+                        packaged_order["id"])  # Cancels order if it still hasn't executed after 2 secs
+                    orders.remove(ordr)
+                    if len(positions) % 2 == 0:
+                        alpaca_api.close_all_positions()
                     if packaged_order["side"] == "buy":
                         print("Bid Increased")
                     elif packaged_order["side"] == "sell":
-                        print("Ask Increased")
-                    alpaca_api.cancel_order(packaged_order["id"])  # Cancels order if it still hasn't executed after 2 secs
+                        print("Ask Increased")'''
         except Exception as error:
             print(error)
     elif order_data.event == "fill":
-        orders = [ordr for ordr in orders if ordr["id"] != packaged_order["id"]]
+        orders = [ordr for ordr in orders if ordr.id != packaged_order.id]
     elif order_data.event == "partial_fill":
-        orders = [ordr for ordr in orders if ordr["id"] != packaged_order["id"]]
+        orders = [ordr for ordr in orders if ordr.id != packaged_order.id]
         orders.append(packaged_order)
     elif order_data.event == "canceled" or order_data.event == "expired":
-        orders = [ordr for ordr in orders if ordr["id"] != packaged_order["id"]]
+        orders = [ordr for ordr in orders if ordr["id"] != packaged_order.id]
 
 
 def main():
@@ -101,11 +106,11 @@ def main():
     orders = get_orders()
 
     if account is not None and positions is not None and orders is not None:
-        # Run Stream Connection Functions
+        # Runs stream connection functions in different threads
         Thread(target=stock_data_updates).start()
         Thread(target=account_updates).start()
         Thread(target=position_updates).start()
-        Thread(target=order_updates).start()
+        Thread(target=conn.run(['trade_updates'])).start()
     else:
         print("Error Occurred: Either a failure in fetching account data, positions, or orders")
 
@@ -170,10 +175,6 @@ def get_orders():
         return None
 
 
-def order_updates():
-    conn.run(['trade_updates'])
-
-
 def account_updates():
     global account
 
@@ -228,12 +229,14 @@ def stock_data_updates():
     ws.run_forever()
 
 
+# Function that gets called whenever the stocks bid price, ask price, or share price changes
 def on_message(ws, message):
     stock_data = json.loads(message)
 
     global goog_data
     global googl_data
 
+    # Filters out stock's trade info (last trade)
     if stock_data[0]["ev"] == 'T':
         goog_trade = next((stock for stock in stock_data if stock["sym"] == "GOOG"), goog_data)
         if goog_trade["p"] is not None and goog_trade["p"] is not None:
@@ -245,6 +248,7 @@ def on_message(ws, message):
             googl_data["p"] = googl_trade["p"]
             googl_data["p"] = googl_trade["p"]
 
+    # Filters out stock's quote (current bid and ask price)
     if stock_data[0]["ev"] == 'Q':
         goog_quote = next((stock for stock in stock_data if stock["sym"] == "GOOG"), goog_data)
         if goog_quote["bp"] is not None and goog_quote["ap"] is not None:
@@ -285,6 +289,14 @@ def on_message(ws, message):
             if not order_exists and not position_exists:
 
                 open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit', ratio=ratio)
+
+            elif position_exists and not order_exists:
+
+                for position in positions:
+                    if position["symbol"] == expensive_class["sym"] and position["side"] == "short":
+                        open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit',
+                                      ratio=ratio)
+
         elif debit_spread < 0.50:
 
             position_exists = check_positions(expensive_class=expensive_class, side="debit")
@@ -293,6 +305,12 @@ def on_message(ws, message):
             if not order_exists and not position_exists:
 
                 open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit', ratio=ratio)
+
+            elif position_exists and not order_exists:
+                for position in positions:
+                    if position["symbol"] == expensive_class["sym"] and position["side"] == "long":
+                        open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit',
+                                      ratio=ratio)
 
 
 def on_error(ws, error):
@@ -414,5 +432,6 @@ def close_position(expensive_class, cheaper_class, side, ratio):
             print('Credit Spread Closed')
 
 
+# This block of code is the catalyst to running our algorithm and stock market checks
 if __name__ == '__main__':
     main()
