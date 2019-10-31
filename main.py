@@ -3,51 +3,43 @@ import json
 import alpaca_trade_api as alpaca
 from alpaca_trade_api import StreamConn
 from threading import Thread
+from models.stock import Stock
 from models.order import Order
 from models.hedged_order import HedgedOrder
-from multiprocessing import Process
+from models.position import Position
+from models.account import Account
 import time
 
 # Declaration of Alpaca API
+# noinspection SpellCheckingInspection
 alpaca_api = alpaca.REST(
-    key_id='PKT95IYTT39JEFETIJP7',
-    secret_key='xb5O2safuUJnrR5Ox1JZF8pfF6/oEeFUO0k1q8NM',
+    key_id='PK9W3C1GMJM9X919CMPY',
+    secret_key='ws4CXCL1glbV9glqxY/uJTNjTguWBAkP0vDxvkYw',
     base_url='https://paper-api.alpaca.markets',
 )
 
 # Declaration of stream
 conn = StreamConn(
-    key_id="PKT95IYTT39JEFETIJP7",
-    secret_key="xb5O2safuUJnrR5Ox1JZF8pfF6/oEeFUO0k1q8NM",
+    key_id="PK9W3C1GMJM9X919CMPY",
+    secret_key="ws4CXCL1glbV9glqxY/uJTNjTguWBAkP0vDxvkYw",
     base_url="https://paper-api.alpaca.markets",
 )
 
-# Declaration of Google Class C data (empty)
-goog_data = {
-    "sym": "GOOG",
-    "p": None,
-    "bp": None,
-    "ap": None,
-}
+# Global Declaration of Google Class C data (empty)
+stock_a = Stock(symbol="GOOG", price=None, bid_price=None, ask_price=None)
 
-# Declaration of Google Class A data (empty)
-googl_data = {
-    "sym": "GOOGL",
-    "p": None,
-    "bp": None,
-    "ap": None,
-}
+# Global Declaration of Google Class A data (empty)
+stock_b = Stock(symbol="GOOGL", price=None, bid_price=None, ask_price=None)
 
-# Declaration of Alpaca account data (empty)
-account = {
-    "buyingPower": None,
-    "portfolioValue": None,
-    "regTBuyingPower": None,
-}
+# Global Declaration of Alpaca account data (empty)
+account = Account(buying_power=None, portfolio_value=None, reg_t_buying_power=None)
 
-# Declaration of our positions and orders (empty)
+# Declaration of our positions, orders, and hedged orders (empty)
 positions = []
 orders = []
+hedged_orders = []
+
+hedging = False
 
 # Alpaca has not made account updates useful yet
 '''@conn.on(r'account_updates')
@@ -56,79 +48,70 @@ async def on_account_updates(conn, channel, account):
 
 
 # Function that is called whenever an order update occurs (new orders, fills, partial fills, cancels, etc...)
+# noinspection SpellCheckingInspection,PyShadowingNames
 @conn.on(r'trade_updates')
 async def on_trade_updates(conn, channel, data):
     global orders
+    global hedged_orders
 
     order_data = data
     order = order_data.order
-    packaged_order = Order(order["id"], order["symbol"], order["limit_price"], order["order_type"], order["qty"],
-                           order["filled_qty"], order["side"], order["time_in_force"], order["status"])
+    packaged_order = Order(id=order["id"], asset_id=order["asset_id"],symbol=order["symbol"], limit_price=order["limit_price"],
+                           order_type=order["order_type"], qty=order["qty"],
+                           filled_qty=order["filled_qty"], side=order["side"], time_in_force=order["time_in_force"],
+                           status=order["status"])
 
     if order_data.event == "new":
         orders.append(packaged_order)
-        print("Timer Started")
-        time.sleep(5.0)
-        try:
-            print("Time Elapsed 5 Seconds")
-            '''for ordr in orders:
-                if ordr["id"] == packaged_order["id"]:
-                    alpaca_api.cancel_order(
-                        packaged_order["id"])  # Cancels order if it still hasn't executed after 2 secs
-                    orders.remove(ordr)
-                    if len(positions) % 2 == 0:
-                        alpaca_api.close_all_positions()
-                    if packaged_order["side"] == "buy":
-                        print("Bid Increased")
-                    elif packaged_order["side"] == "sell":
-                        print("Ask Increased")'''
-        except Exception as error:
-            print(error)
     elif order_data.event == "fill":
-        orders = [ordr for ordr in orders if ordr.id != packaged_order.id]
+        if orders.count(packaged_order) > 0:
+            orders.remove(packaged_order)
     elif order_data.event == "partial_fill":
-        orders = [ordr for ordr in orders if ordr.id != packaged_order.id]
-        orders.append(packaged_order)
+        if orders.count(packaged_order) > 0:
+            order_index = orders.index(packaged_order)
+            orders[order_index] = packaged_order
     elif order_data.event == "canceled" or order_data.event == "expired":
-        orders = [ordr for ordr in orders if ordr["id"] != packaged_order.id]
+        if orders.count(packaged_order) > 0:
+            orders.remove(packaged_order)
 
 
 def main():
     # Local versions of our account data, current positions, and awaiting orders
     global account
     global positions
-    global orders
+    # global orders
 
     # Retrieves initial account data before running algorithm
-    # TODO: add a function that retrieves the historical data of GOOG and GOOGL
+    # TODO: add a function that retrieves the historical data of stock A and stock B
     account = get_account()
     positions = get_positions()
-    orders = get_orders()
+    # TODO: figure out a way to keep corresponding orders together off algorithm start-up
+    # orders = get_orders()
 
     if account is not None and positions is not None and orders is not None:
         # Runs stream connection functions in different threads
-        Thread(target=stock_data_updates).start()
+        Thread(target=stock_stream_connection).start()
         Thread(target=account_updates).start()
         Thread(target=position_updates).start()
-        Thread(target=conn.run(['trade_updates'])).start()
+        Thread(target=order_updates).start()
     else:
         print("Error Occurred: Either a failure in fetching account data, positions, or orders")
 
 
+# noinspection PyShadowingNames
 def get_account():
     try:
         account_info = alpaca_api.get_account()
-        account = {
-            "buyingPower": float(account_info.buying_power),
-            "portfolioValue": float(account_info.portfolio_value),
-            "regTBuyingPower": float(account_info.regt_buying_power),
-        }
+        account = Account(buying_power=float(account_info.buying_power),
+                          portfolio_value=float(account_info.portfolio_value),
+                          reg_t_buying_power=float(account_info.regt_buying_power))
         return account
     except Exception as error:
         print(error)
         return None
 
 
+# noinspection PyShadowingNames
 def get_positions():
     positions = []
 
@@ -136,19 +119,16 @@ def get_positions():
         position_list = alpaca_api.list_positions()
         if len(position_list) != 0:
             for position in position_list:
-                positions.append({
-                    "symbol": position.symbol,
-                    "qty": position.qty,
-                    "side": position.side,
-                    "marketValue": position.market_value,
-                    "currentPrice": position.current_price,
-                })
+                packaged_position = Position(asset_id=position.asset_id, symbol=position.symbol, qty=position.qty, side=position.side,
+                                             market_value=position.market_value, current_price=position.current_price)
+                positions.append(packaged_position)
         return positions
     except Exception as error:
         print(error)
         return None
 
 
+# noinspection PyShadowingNames,PyArgumentList
 def get_orders():
     orders = []
 
@@ -159,16 +139,10 @@ def get_orders():
                 filter(lambda o: o.canceled_at is None and o.filled_at is None and o.failed_at is None, order_list))
             if len(filtered_order_list) != 0:
                 for order in filtered_order_list:
-                    orders.append({
-                        "id": order.id,
-                        "symbol": order.symbol,
-                        "limitPrice": order.limit_price,
-                        "orderType": order.order_type,
-                        "qty": order.qty,
-                        "side": order.side,
-                        "timeInForce": order.time_in_force,
-                        "status": order.status,
-                    })
+                    packaged_order = Order(id=order.id, asset_id=order.asset_id, symbol=order.symbol, limit_price=order.limit_price,
+                                           order_type=order.order_type, qty=order.qty, side=order.side,
+                                           time_in_force=order.time_in_force, status=order.status)
+                    orders.append(packaged_order)
         return orders
     except Exception as error:
         print(error)
@@ -181,14 +155,16 @@ def account_updates():
     while True:
         try:
             account_info = alpaca_api.get_account()
-            account = {
-                "buyingPower": float(account_info.buying_power),
-                "portfolioValue": float(account_info.portfolio_value),
-                "regTBuyingPower": float(account_info.regt_buying_power),
-            }
+            account = Account(buying_power=float(account_info.buying_power),
+                              portfolio_value=float(account_info.portfolio_value),
+                              reg_t_buying_power=float(account_info.regt_buying_power))
         except Exception as error:
             print(error)
         time.sleep(0.5)
+
+
+def order_updates():
+    conn.run(['trade_updates'])
 
 
 def position_updates():
@@ -201,13 +177,11 @@ def position_updates():
             position_list = alpaca_api.list_positions()
             if len(position_list) != 0:
                 for position in position_list:
-                    current_positions.append({
-                        "symbol": position.symbol,
-                        "qty": position.qty,
-                        "side": position.side,
-                        "marketValue": position.market_value,
-                        "currentPrice": position.current_price,
-                    })
+                    print(position)
+                    packaged_position = Position(asset_id=position.asset_id, symbol=position.symbol, qty=position.qty, side=position.side,
+                                                 market_value=position.market_value,
+                                                 current_price=position.current_price)
+                    current_positions.append(packaged_position)
                 positions = current_positions
             else:
                 positions = []
@@ -218,99 +192,99 @@ def position_updates():
         time.sleep(0.5)
 
 
-def stock_data_updates():
+def stock_stream_connection():
     print('Started Running')
 
     # Subscribes WebSocket to stocks
-    ws = websocket.WebSocketApp("wss://alpaca.socket.polygon.io/stocks", on_message=on_message, on_open=on_open,
+    ws = websocket.WebSocketApp("wss://alpaca.socket.polygon.io/stocks", on_message=on_stock_update, on_open=on_open,
                                 on_close=on_close, on_error=on_error)
 
     ws.on_open = on_open
     ws.run_forever()
 
 
-# Function that gets called whenever the stocks bid price, ask price, or share price changes
-def on_message(ws, message):
+# Function that gets called whenever a stocks bid price, ask price, or share price changes
+def on_stock_update(ws, message):
     stock_data = json.loads(message)
 
-    global goog_data
-    global googl_data
+    global stock_a
+    global stock_b
 
     # Filters out stock's trade info (last trade)
     if stock_data[0]["ev"] == 'T':
-        goog_trade = next((stock for stock in stock_data if stock["sym"] == "GOOG"), goog_data)
-        if goog_trade["p"] is not None and goog_trade["p"] is not None:
-            goog_data["p"] = goog_trade["p"]
-            goog_data["p"] = goog_trade["p"]
-            # print(goog_data)
-        googl_trade = next((stock for stock in stock_data if stock["sym"] == "GOOGL"), googl_data)
-        if googl_trade["p"] is not None and googl_trade["p"] is not None:
-            googl_data["p"] = googl_trade["p"]
-            googl_data["p"] = googl_trade["p"]
+        stock_a_trade = next((stock for stock in stock_data if stock["sym"] == stock_a.symbol), {
+            "sym": stock_a.symbol,
+            "p": stock_a.price,
+            "bp": stock_a.bid_price,
+            "ap": stock_a.ask_price,
+        })
+        if stock_a_trade["p"] is not None:
+            stock_a.price = stock_a_trade["p"]
+
+        stock_b_trade = next((stock for stock in stock_data if stock["sym"] == stock_b.symbol), {
+            "sym": stock_b.symbol,
+            "p": stock_b.price,
+            "bp": stock_b.bid_price,
+            "ap": stock_b.ask_price,
+        })
+        if stock_b_trade["p"] is not None:
+            stock_b.price = stock_b_trade["p"]
 
     # Filters out stock's quote (current bid and ask price)
     if stock_data[0]["ev"] == 'Q':
-        goog_quote = next((stock for stock in stock_data if stock["sym"] == "GOOG"), goog_data)
-        if goog_quote["bp"] is not None and goog_quote["ap"] is not None:
-            goog_data["bp"] = goog_quote["bp"]
-            goog_data["ap"] = goog_quote["ap"]
-            # print(goog_data)
-        googl_quote = next((stock for stock in stock_data if stock["sym"] == "GOOGL"), googl_data)
-        if googl_quote["bp"] is not None and googl_quote["ap"] is not None:
-            googl_data["bp"] = googl_quote["bp"]
-            googl_data["ap"] = googl_quote["ap"]
+        stock_a_quote = next((stock for stock in stock_data if stock["sym"] == stock_a.symbol), {
+            "sym": stock_a.symbol,
+            "p": stock_a.price,
+            "bp": stock_a.bid_price,
+            "ap": stock_a.ask_price,
+        })
+        if stock_a_quote["bp"] is not None:
+            stock_a.bid_price = stock_a_quote["bp"]
+        if stock_a_quote["ap"] is not None:
+            stock_a.ask_price = stock_a_quote["ap"]
+
+        stock_b_quote = next((stock for stock in stock_data if stock["sym"] == stock_b.symbol), {
+            "sym": stock_b.symbol,
+            "p": stock_b.price,
+            "bp": stock_b.bid_price,
+            "ap": stock_b.ask_price,
+        })
+        if stock_b_quote["bp"] is not None:
+            stock_b.bid_price = stock_b_quote["bp"]
+        if stock_b_quote["ap"] is not None:
+            stock_b.ask_price = stock_b_quote["ap"]
 
     market_is_open = True
-    stock_data_exists = True
+    stock_data_exists = check_stock_data()
 
     if market_is_open and stock_data_exists:
         # Run Algorithm Here
 
+        # Declaration of expensive and cheaper class (empty)
         expensive_class = None
         cheaper_class = None
+
         ratio = 1 / 1
-        if goog_data["p"] >= googl_data["p"]:
-            expensive_class = goog_data
-            cheaper_class = googl_data
+
+        if stock_a.price >= stock_b.price:
+            expensive_class = stock_a
+            cheaper_class = stock_b
         else:
-            expensive_class = googl_data
-            cheaper_class = goog_data
+            expensive_class = stock_b
+            cheaper_class = stock_a
 
-        credit_spread = expensive_class["ap"] - (cheaper_class["bp"] * ratio)
-        debit_spread = expensive_class["bp"] - (cheaper_class["ap"] * ratio)
+        credit_spread = expensive_class.ask_price - (cheaper_class.bid_price * ratio)
+        debit_spread = expensive_class.bid_price - (cheaper_class.ask_price * ratio)
 
-        if credit_spread > 1.50:
+        if credit_spread > 1.50 and not hedging:
 
-            position_exists = check_positions(expensive_class=expensive_class, side="credit")
-            order_exists = check_orders(expensive_class=expensive_class, side="credit")
-            print(f'Position Exists: {position_exists}')
-            print(f'Order Exists: {order_exists}')
+            open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit',
+                          ratio=ratio)
 
-            if not order_exists and not position_exists:
+        elif debit_spread < 0.50 and not hedging:
 
-                open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit', ratio=ratio)
-
-            elif position_exists and not order_exists:
-
-                for position in positions:
-                    if position["symbol"] == expensive_class["sym"] and position["side"] == "short":
-                        open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit',
-                                      ratio=ratio)
-
-        elif debit_spread < 0.50:
-
-            position_exists = check_positions(expensive_class=expensive_class, side="debit")
-            order_exists = check_orders(expensive_class=expensive_class, side="debit")
-
-            if not order_exists and not position_exists:
-
-                open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit', ratio=ratio)
-
-            elif position_exists and not order_exists:
-                for position in positions:
-                    if position["symbol"] == expensive_class["sym"] and position["side"] == "long":
-                        open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit',
-                                      ratio=ratio)
+            open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit',
+                          ratio=ratio)
 
 
 def on_error(ws, error):
@@ -340,8 +314,7 @@ def check_market():
 
 
 def check_stock_data():
-    if goog_data["p"] is not None and goog_data["bp"] is not None and goog_data["ap"] is not None and googl_data[
-        "p"] is not None and googl_data["bp"] is not None and googl_data["ap"] is not None:
+    if stock_a.price is not None and stock_a.bid_price is not None and stock_a.ask_price is not None and stock_b.price is not None and stock_b.bid_price is not None and stock_b.ask_price is not None:
         return True
     else:
         return False
@@ -370,66 +343,162 @@ def check_positions(expensive_class, side):
         return False
 
 
-def check_orders(expensive_class, side):
-    if len(orders) >= 1:
-        return True
-        '''if side == "credit":
-            order_exists = None
-            for order in orders:
-                if order["symbol"] == expensive_class["sym"] and order["side"] == "sell":
-                    order_exists = True
-                else:
-                    order_exists = False
-            return order_exists
-        elif side == "debit":
-            order_exists = None
-            for order in orders:
-                if order["symbol"] == expensive_class["sym"] and order["side"] == "buy":
-                    order_exists = True
-                else:
-                    order_exists = False
-            return order_exists'''
-    else:
-        return False
+def check_orders(hedged_order):
+    # TODO: make sure order is received before we check to see if it executed
+
+    global hedging
+
+    # Shows a flag to the rest of the program that it is currently trying to hedge a position and no further positions should be opened until hedged or canceled
+    hedging = True
+
+    # Position is not hedged when orders are first submitted to Alpaca
+    position_not_hedged = False
+
+    # Orders exist when first submitted to Alpaca
+    buy_order_exists = True
+    sell_order_exists = True
+
+    # Positions don't exist when first submitted to Alpaca because orders are awaiting execution
+    buy_position_exists = False
+    sell_position_exists = False
+
+    # Initialization of the amount of times we check if our position is hedged
+    check_count = 0
+
+    while position_not_hedged:
+        buy_order = hedged_order.buy_order
+        sell_order = hedged_order.sell_order
+
+        for order in orders:
+            if buy_order != order:
+                buy_order_exists = False
+            else:
+                hedged_order.buy_order.filled_qty = order.filled_qty
+
+            if sell_order != order:
+                sell_order_exists = False
+            else:
+                hedged_order.sell_order.filled_qty = order.filled_qty
+
+        if not buy_order_exists or not sell_order_exists:
+            for position in positions:
+                if buy_order.asset_id == position.asset_id:
+                    buy_position_exists = True
+                if sell_order.asset_id == position.asset_id:
+                    sell_position_exists = True
+
+        position_not_hedged = not buy_position_exists or not sell_position_exists
+
+        if position_not_hedged and buy_order_exists and check_count >= 3:
+            print("Adjust buy order limit price")
+            try:
+                alpaca_api.cancel_order(buy_order.id)
+                new_buy_order = alpaca_api.submit_order(symbol=buy_order.symbol,
+                                                        qty=int(buy_order.qty - buy_order.filled_qty),
+                                                        side=buy_order.side, type=buy_order.order_type,
+                                                        time_in_force=buy_order.time_in_force,
+                                                        limit_price=float(buy_order.limit_price + 0.10))
+                hedged_order.buy_order = new_buy_order
+            except Exception as error:
+                print(error)
+
+        if position_not_hedged and sell_order_exists and check_count >= 3:
+            print("Adjust sell order limit price")
+            try:
+                alpaca_api.cancel_order(sell_order.id)
+                new_sell_order = alpaca_api.submit_order(symbol=sell_order.symbol,
+                                                         qty=int(sell_order.qty - sell_order.filled_qty),
+                                                         side=sell_order.side, type=sell_order.order_type,
+                                                         time_in_force=sell_order.time_in_force,
+                                                         limit_price=float(sell_order.limit_price - 0.10))
+                hedged_order.sell_order = new_sell_order
+            except Exception as error:
+                print(error)
+
+        check_count = check_count + 1
+
+    time.sleep(5.0)
 
 
+# noinspection PyArgumentList,PyArgumentList,PyArgumentList,PyArgumentList
 def open_position(expensive_class, cheaper_class, side, ratio):
     # Figure out how to stop the program from opening too many positions
     try:
         if side == "credit":
-            if account["buyingPower"] >= cheaper_class["ap"] + expensive_class["bp"]:
-                alpaca_api.submit_order(expensive_class["sym"], qty=1, side='sell', type='limit',
-                                        limit_price=expensive_class["ap"] - .60, time_in_force='gtc')
-                alpaca_api.submit_order(cheaper_class["sym"], qty=int(ratio), side='buy', type='limit',
-                                        limit_price=cheaper_class["bp"] + .60, time_in_force='gtc')
-                print('Credit Spread Bought')
+            # if account.buying_power >= cheaper_class.ask_price + expensive_class.bid_price:
+            sell_order = alpaca_api.submit_order(expensive_class.symbol, qty=1, side='sell', type='limit',
+                                                 limit_price=expensive_class.ask_price - .60, time_in_force='gtc')
+            buy_order = alpaca_api.submit_order(cheaper_class.symbol, qty=int(ratio), side='buy', type='limit',
+                                                limit_price=cheaper_class.bid_price + .60, time_in_force='gtc')
+
+            packaged_sell_order = Order(id=sell_order.id, asset_id=sell_order.asset_id, symbol=expensive_class.symbol,
+                                        limit_price=sell_order.limit_price,
+                                        order_type=sell_order.order_type, side=sell_order.side, qty=sell_order.qty,
+                                        filled_qty=sell_order.filled_qty, time_in_force=sell_order.time_in_force,
+                                        status=sell_order.status)
+
+            packaged_buy_order = Order(id=buy_order.id, asset_id=buy_order.asset_id, symbol=cheaper_class.symbol, limit_price=buy_order.limit_price,
+                                       order_type=buy_order.order_type, side=buy_order.side, qty=buy_order.qty,
+                                       filled_qty=buy_order.filled_qty, time_in_force=buy_order.time_in_force,
+                                       status=buy_order.status)
+
+            hedged_order = HedgedOrder(sell_order=packaged_sell_order, buy_order=packaged_buy_order, side=side)
+
+            hedged_orders.append(hedged_order)
+
+            print('Credit Spread Bought')
+
+            Thread(target=check_orders(hedged_order)).start()
+
         elif side == "debit":
-            if account["buyingPower"] >= expensive_class["ap"] + cheaper_class["bp"]:
-                alpaca_api.submit_order(cheaper_class["sym"], qty=int(ratio), side='sell', type='limit',
-                                        limit_price=cheaper_class["ap"] - .60, time_in_force='gtc')
-                alpaca_api.submit_order(expensive_class["sym"], qty=1, side='buy', type='limit',
-                                        limit_price=expensive_class["bp"] + .60, time_in_force='gtc')
-                print('Debit Spread Bought')
+            # if account.buying_power >= expensive_class.ask_price + cheaper_class.bid_price:
+            sell_order = alpaca_api.submit_order(cheaper_class.symbol, qty=int(ratio), side='sell', type='limit',
+                                                 limit_price=cheaper_class.ask_price - .60, time_in_force='gtc')
+            buy_order = alpaca_api.submit_order(expensive_class.symbol, qty=1, side='buy', type='limit',
+                                                limit_price=expensive_class.bid_price + .60, time_in_force='gtc')
+
+            packaged_sell_order = Order(id=sell_order.id, asset_id=sell_order.asset_id, symbol=cheaper_class.symbol,
+                                        limit_price=sell_order.limit_price,
+                                        order_type=sell_order.order_type, side=sell_order.side, qty=sell_order.qty,
+                                        filled_qty=sell_order.filled_qty, time_in_force=sell_order.time_in_force,
+                                        status=sell_order.status)
+
+            packaged_buy_order = Order(id=buy_order.id, asset_id=buy_order.asset_id, symbol=expensive_class.symbol,
+                                       limit_price=buy_order.limit_price,
+                                       order_type=buy_order.order_type, side=buy_order.side, qty=buy_order.qty,
+                                       filled_qty=buy_order.filled_qty, time_in_force=buy_order.time_in_force,
+                                       status=buy_order.status)
+
+            hedged_order = HedgedOrder(sell_order=packaged_sell_order, buy_order=packaged_buy_order, side=side)
+
+            hedged_orders.append(hedged_order)
+
+            print('Debit Spread Bought')
+
+            Thread(target=check_orders(hedged_order)).start()
+
     except Exception as error:
         print(error)
 
 
-def close_position(expensive_class, cheaper_class, side, ratio):
+'''def close_position(expensive_class, cheaper_class, side, ratio):
     print("CLOSE POSITION")
     if side == "credit":
-        if account["buyingPower"] >= (cheaper_class["ap"] * ratio):  # Ask Drew what the cost of the trade is
-            alpaca_api.submit_order(expensive_class, qty=1, side='sell', type='limit',
-                                    limit_price=expensive_class["bp"], time_in_force='gtc')
-            alpaca_api.submit_order(cheaper_class, qty=ratio, side='buy', type='limit', limit_price=cheaper_class["ap"],
-                                    time_in_force='gtc')
-            print('Debit Spread Closed')
+        # if account.buying_power >= (cheaper_class.ask_price * ratio):  # Ask Drew what the cost of the trade is
+        alpaca_api.submit_order(expensive_class.symbol, qty=1, side='sell', type='limit',
+                                limit_price=expensive_class.bid_price, time_in_force='gtc')
+        alpaca_api.submit_order(cheaper_class.symbol, qty=ratio, side='buy', type='limit',
+                                limit_price=cheaper_class.ask_price,
+                                time_in_force='gtc')
+        print('Debit Spread Closed')
     elif side == "debit":
-        if account["buyingPower"] >= expensive_class["ap"]:  # Ask Drew what the cost of the trade is
-            alpaca_api.submit_order(cheaper_class, qty=ratio, side='sell', type='limit',
-                                    limit_price=cheaper_class["ap"], time_in_force='gtc')
-            alpaca_api.submit_order(expensive_class, qty=1, side='buy', type='limit', limit_price=expensive_class["bp"],
-                                    time_in_force='gtc')
-            print('Credit Spread Closed')
+        # if account.buying_power >= expensive_class.ask_price:  # Ask Drew what the cost of the trade is
+        alpaca_api.submit_order(cheaper_class.symbol, qty=ratio, side='sell', type='limit',
+                                limit_price=cheaper_class.ask_price, time_in_force='gtc')
+        alpaca_api.submit_order(expensive_class.symbol, qty=1, side='buy', type='limit',
+                                limit_price=expensive_class.bid_price,
+                                time_in_force='gtc')
+        print('Credit Spread Closed')'''
 
 
 # This block of code is the catalyst to running our algorithm and stock market checks
