@@ -25,16 +25,26 @@ conn = StreamConn(
     base_url="https://paper-api.alpaca.markets",
 )
 
-# Global Declaration of Google Class C data (empty)
-stock_a = Stock(symbol="GOOG", price=None, bid_price=None, ask_price=None)
+# Global Declaration of Stock A data (empty)
+stock_a = Stock(symbol=input("Enter Stock A Symbol *IN ALL CAPS*: "), price=None, bid_price=None, ask_price=None)
 
-# Global Declaration of Google Class A data (empty)
-stock_b = Stock(symbol="GOOGL", price=None, bid_price=None, ask_price=None)
+# Global Declaration of Stock B data (empty)
+stock_b = Stock(symbol=input("Enter Stock B Symbol *IN ALL CAPS*: "), price=None, bid_price=None, ask_price=None)
 
 # Global Declaration of Alpaca account data (empty)
 account = Account(buying_power=None, portfolio_value=None, reg_t_buying_power=None)
 
-# Declaration of our positions, orders, and hedged orders (empty)
+# Global Declaration of Arbitrary Values used in our algorithm (limit prices and credit and debit spreads)
+original_buy_limit_price = float(input("Enter the adjustment for when we originally go to buy a stock (should be in cents): "))
+original_sell_limit_price = float(input("Enter the adjustment for when we originally go to sell a stock (should be positive and in cents): "))
+buy_limit_price_adjustment = float(input("Enter the amount of cents that should be added to whenever we adjust the buy limit price: "))
+sell_limit_price_adjustment = float(input("Enter the amount of cents that should be added to whenever we adjust the sell limit price: "))
+target_credit_spread = float(input("Enter Target Credit Spread: "))
+target_debit_spread = float(input("Enter Target Debit Spread: "))
+ratio_multiplier = float(input("Enter the multiplier that makes the share price of the cheaper stock equal to the more expensive stock (ex. 1500 for BRK.B): "))
+
+
+# Global Declaration of our positions, orders, and hedged orders (empty)
 positions = []
 orders = []
 hedged_orders = []
@@ -86,7 +96,7 @@ def main():
     account = get_account()
     positions = get_positions()
     # TODO: figure out a way to keep corresponding orders together off algorithm start-up
-    # orders = get_orders()
+    alpaca_api.cancel_all_orders()
 
     if account is not None and positions is not None and orders is not None:
         # Runs stream connection functions in different threads
@@ -177,7 +187,6 @@ def position_updates():
             position_list = alpaca_api.list_positions()
             if len(position_list) != 0:
                 for position in position_list:
-                    print(position)
                     packaged_position = Position(asset_id=position.asset_id, symbol=position.symbol, qty=position.qty, side=position.side,
                                                  market_value=position.market_value,
                                                  current_price=position.current_price)
@@ -264,8 +273,6 @@ def on_stock_update(ws, message):
         expensive_class = None
         cheaper_class = None
 
-        ratio = 1 / 1
-
         if stock_a.price >= stock_b.price:
             expensive_class = stock_a
             cheaper_class = stock_b
@@ -273,18 +280,18 @@ def on_stock_update(ws, message):
             expensive_class = stock_b
             cheaper_class = stock_a
 
-        credit_spread = expensive_class.ask_price - (cheaper_class.bid_price * ratio)
-        debit_spread = expensive_class.bid_price - (cheaper_class.ask_price * ratio)
+        credit_spread = expensive_class.ask_price - (cheaper_class.bid_price * ratio_multiplier)
+        debit_spread = expensive_class.bid_price - (cheaper_class.ask_price * ratio_multiplier)
 
-        if credit_spread > 1.50 and not hedging:
+        if credit_spread > target_credit_spread and not hedging:
 
             open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='credit',
-                          ratio=ratio)
+                          ratio=ratio_multiplier)
 
-        elif debit_spread < 0.50 and not hedging:
+        elif debit_spread < target_debit_spread and not hedging:
 
             open_position(expensive_class=expensive_class, cheaper_class=cheaper_class, side='debit',
-                          ratio=ratio)
+                          ratio=ratio_multiplier)
 
 
 def on_error(ws, error):
@@ -298,7 +305,7 @@ def on_close(ws):
 
 def on_open(ws):
     ws.send('{"action":"auth","params":"AKK5WUTECIGM1G8XTN3C"}')
-    ws.send('{"action":"subscribe","params":"Q.GOOG,T.GOOG,Q.GOOGL,T.GOOGL"}')
+    ws.send('{"action":"subscribe","params":"Q.{},T.{},Q.{},T.{}"}'.format(stock_a.symbol, stock_a.symbol, stock_b.symbol, stock_b.symbol))
 
 
 def check_market():
@@ -320,36 +327,8 @@ def check_stock_data():
         return False
 
 
-def check_positions(expensive_class, side):
-    if len(positions) >= 1:
-        return True
-        '''if side == "credit":
-            for position in positions:
-                position_exists = None
-                if position["symbol"] == expensive_class["sym"] and position["side"] == "short":
-                    position_exists = True
-                else:
-                    position_exists = False
-            return position_exists
-        elif side == "debit":
-            for position in positions:
-                position_exists = None
-                if position["symbol"] == expensive_class["sym"] and position["side"] == "long":
-                    position_exists = True
-                else:
-                    position_exists = False
-            return position_exists'''
-    else:
-        return False
-
-
 def check_orders(hedged_order):
     # TODO: make sure order is received before we check to see if it executed
-
-    global hedging
-
-    # Shows a flag to the rest of the program that it is currently trying to hedge a position and no further positions should be opened until hedged or canceled
-    hedging = True
 
     # Position is not hedged when orders are first submitted to Alpaca
     position_not_hedged = False
@@ -389,7 +368,7 @@ def check_orders(hedged_order):
 
         position_not_hedged = not buy_position_exists or not sell_position_exists
 
-        if position_not_hedged and buy_order_exists and check_count >= 3:
+        if position_not_hedged and buy_order_exists and check_count % 3 == 0 and check_count != 0:
             print("Adjust buy order limit price")
             try:
                 alpaca_api.cancel_order(buy_order.id)
@@ -397,12 +376,12 @@ def check_orders(hedged_order):
                                                         qty=int(buy_order.qty - buy_order.filled_qty),
                                                         side=buy_order.side, type=buy_order.order_type,
                                                         time_in_force=buy_order.time_in_force,
-                                                        limit_price=float(buy_order.limit_price + 0.10))
+                                                        limit_price=float(buy_order.limit_price + buy_limit_price_adjustment))
                 hedged_order.buy_order = new_buy_order
             except Exception as error:
                 print(error)
 
-        if position_not_hedged and sell_order_exists and check_count >= 3:
+        if position_not_hedged and sell_order_exists and check_count % 3 == 0 and check_count != 0:
             print("Adjust sell order limit price")
             try:
                 alpaca_api.cancel_order(sell_order.id)
@@ -410,10 +389,15 @@ def check_orders(hedged_order):
                                                          qty=int(sell_order.qty - sell_order.filled_qty),
                                                          side=sell_order.side, type=sell_order.order_type,
                                                          time_in_force=sell_order.time_in_force,
-                                                         limit_price=float(sell_order.limit_price - 0.10))
+                                                         limit_price=float(sell_order.limit_price - sell_limit_price_adjustment))
                 hedged_order.sell_order = new_sell_order
             except Exception as error:
                 print(error)
+
+        if not position_not_hedged:
+            global hedging
+
+            hedging = False
 
         check_count = check_count + 1
 
@@ -422,14 +406,19 @@ def check_orders(hedged_order):
 
 # noinspection PyArgumentList,PyArgumentList,PyArgumentList,PyArgumentList
 def open_position(expensive_class, cheaper_class, side, ratio):
-    # Figure out how to stop the program from opening too many positions
+
+    global hedging
+
+    # Shows a flag to the rest of the program that it is currently trying to hedge a position and no further positions should be opened until hedged or canceled
+    hedging = True
+
     try:
-        if side == "credit":
-            # if account.buying_power >= cheaper_class.ask_price + expensive_class.bid_price:
+        if side == "credit" and account.buying_power >= cheaper_class.ask_price + expensive_class.bid_price:
+
             sell_order = alpaca_api.submit_order(expensive_class.symbol, qty=1, side='sell', type='limit',
-                                                 limit_price=expensive_class.ask_price - .60, time_in_force='gtc')
+                                                 limit_price=expensive_class.ask_price - original_sell_limit_price, time_in_force='gtc')
             buy_order = alpaca_api.submit_order(cheaper_class.symbol, qty=int(ratio), side='buy', type='limit',
-                                                limit_price=cheaper_class.bid_price + .60, time_in_force='gtc')
+                                                limit_price=cheaper_class.bid_price + original_buy_limit_price, time_in_force='gtc')
 
             packaged_sell_order = Order(id=sell_order.id, asset_id=sell_order.asset_id, symbol=expensive_class.symbol,
                                         limit_price=sell_order.limit_price,
@@ -450,12 +439,12 @@ def open_position(expensive_class, cheaper_class, side, ratio):
 
             Thread(target=check_orders(hedged_order)).start()
 
-        elif side == "debit":
-            # if account.buying_power >= expensive_class.ask_price + cheaper_class.bid_price:
+        elif side == "debit" and account.buying_power >= cheaper_class.ask_price + expensive_class.bid_price:
+
             sell_order = alpaca_api.submit_order(cheaper_class.symbol, qty=int(ratio), side='sell', type='limit',
-                                                 limit_price=cheaper_class.ask_price - .60, time_in_force='gtc')
+                                                 limit_price=cheaper_class.ask_price - original_sell_limit_price, time_in_force='gtc')
             buy_order = alpaca_api.submit_order(expensive_class.symbol, qty=1, side='buy', type='limit',
-                                                limit_price=expensive_class.bid_price + .60, time_in_force='gtc')
+                                                limit_price=expensive_class.bid_price + original_buy_limit_price, time_in_force='gtc')
 
             packaged_sell_order = Order(id=sell_order.id, asset_id=sell_order.asset_id, symbol=cheaper_class.symbol,
                                         limit_price=sell_order.limit_price,
@@ -479,26 +468,6 @@ def open_position(expensive_class, cheaper_class, side, ratio):
 
     except Exception as error:
         print(error)
-
-
-'''def close_position(expensive_class, cheaper_class, side, ratio):
-    print("CLOSE POSITION")
-    if side == "credit":
-        # if account.buying_power >= (cheaper_class.ask_price * ratio):  # Ask Drew what the cost of the trade is
-        alpaca_api.submit_order(expensive_class.symbol, qty=1, side='sell', type='limit',
-                                limit_price=expensive_class.bid_price, time_in_force='gtc')
-        alpaca_api.submit_order(cheaper_class.symbol, qty=ratio, side='buy', type='limit',
-                                limit_price=cheaper_class.ask_price,
-                                time_in_force='gtc')
-        print('Debit Spread Closed')
-    elif side == "debit":
-        # if account.buying_power >= expensive_class.ask_price:  # Ask Drew what the cost of the trade is
-        alpaca_api.submit_order(cheaper_class.symbol, qty=ratio, side='sell', type='limit',
-                                limit_price=cheaper_class.ask_price, time_in_force='gtc')
-        alpaca_api.submit_order(expensive_class.symbol, qty=1, side='buy', type='limit',
-                                limit_price=expensive_class.bid_price,
-                                time_in_force='gtc')
-        print('Credit Spread Closed')'''
 
 
 # This block of code is the catalyst to running our algorithm and stock market checks
