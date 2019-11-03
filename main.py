@@ -35,14 +35,18 @@ stock_b = Stock(symbol=input("Enter Stock B Symbol *IN ALL CAPS*: "), price=None
 account = Account(buying_power=None, portfolio_value=None, reg_t_buying_power=None)
 
 # Global Declaration of Arbitrary Values used in our algorithm (limit prices and credit and debit spreads)
-original_buy_limit_price = float(input("Enter the adjustment for when we originally go to buy a stock (should be in cents): "))
-original_sell_limit_price = float(input("Enter the adjustment for when we originally go to sell a stock (should be positive and in cents): "))
-buy_limit_price_adjustment = float(input("Enter the amount of cents that should be added to whenever we adjust the buy limit price: "))
-sell_limit_price_adjustment = float(input("Enter the amount of cents that should be added to whenever we adjust the sell limit price: "))
+original_buy_limit_price = float(
+    input("Enter the adjustment for when we originally go to buy a stock (should be in cents): "))
+original_sell_limit_price = float(
+    input("Enter the adjustment for when we originally go to sell a stock (should be positive and in cents): "))
+buy_limit_price_adjustment = float(
+    input("Enter the amount of cents that should be added to whenever we adjust the buy limit price: "))
+sell_limit_price_adjustment = float(
+    input("Enter the amount of cents that should be added to whenever we adjust the sell limit price: "))
 target_credit_spread = float(input("Enter Target Credit Spread: "))
 target_debit_spread = float(input("Enter Target Debit Spread: "))
-ratio_multiplier = float(input("Enter the multiplier that makes the share price of the cheaper stock equal to the more expensive stock (ex. 1500 for BRK.B): "))
-
+ratio_multiplier = float(input(
+    "Enter the multiplier that makes the share price of the cheaper stock equal to the more expensive stock (ex. 1500 for BRK.B): "))
 
 # Global Declaration of our positions, orders, and hedged orders (empty)
 positions = []
@@ -66,7 +70,8 @@ async def on_trade_updates(conn, channel, data):
 
     order_data = data
     order = order_data.order
-    packaged_order = Order(id=order["id"], asset_id=order["asset_id"],symbol=order["symbol"], limit_price=order["limit_price"],
+    packaged_order = Order(id=order["id"], asset_id=order["asset_id"], symbol=order["symbol"],
+                           limit_price=order["limit_price"],
                            order_type=order["order_type"], qty=order["qty"],
                            filled_qty=order["filled_qty"], side=order["side"], time_in_force=order["time_in_force"],
                            status=order["status"])
@@ -129,7 +134,8 @@ def get_positions():
         position_list = alpaca_api.list_positions()
         if len(position_list) != 0:
             for position in position_list:
-                packaged_position = Position(asset_id=position.asset_id, symbol=position.symbol, qty=position.qty, side=position.side,
+                packaged_position = Position(asset_id=position.asset_id, symbol=position.symbol, qty=position.qty,
+                                             side=position.side,
                                              market_value=position.market_value, current_price=position.current_price)
                 positions.append(packaged_position)
         return positions
@@ -149,7 +155,8 @@ def get_orders():
                 filter(lambda o: o.canceled_at is None and o.filled_at is None and o.failed_at is None, order_list))
             if len(filtered_order_list) != 0:
                 for order in filtered_order_list:
-                    packaged_order = Order(id=order.id, asset_id=order.asset_id, symbol=order.symbol, limit_price=order.limit_price,
+                    packaged_order = Order(id=order.id, asset_id=order.asset_id, symbol=order.symbol,
+                                           limit_price=order.limit_price,
                                            order_type=order.order_type, qty=order.qty, side=order.side,
                                            time_in_force=order.time_in_force, status=order.status)
                     orders.append(packaged_order)
@@ -187,7 +194,8 @@ def position_updates():
             position_list = alpaca_api.list_positions()
             if len(position_list) != 0:
                 for position in position_list:
-                    packaged_position = Position(asset_id=position.asset_id, symbol=position.symbol, qty=position.qty, side=position.side,
+                    packaged_position = Position(asset_id=position.asset_id, symbol=position.symbol, qty=position.qty,
+                                                 side=position.side,
                                                  market_value=position.market_value,
                                                  current_price=position.current_price)
                     current_positions.append(packaged_position)
@@ -305,7 +313,9 @@ def on_close(ws):
 
 def on_open(ws):
     ws.send('{"action":"auth","params":"AKK5WUTECIGM1G8XTN3C"}')
-    ws.send('{"action":"subscribe","params":"Q.{},T.{},Q.{},T.{}"}'.format(stock_a.symbol, stock_a.symbol, stock_b.symbol, stock_b.symbol))
+    ws.send(
+        '{"action":"subscribe","params":"Q.{},T.{},Q.{},T.{}"}'.format(stock_a.symbol, stock_a.symbol, stock_b.symbol,
+                                                                       stock_b.symbol))
 
 
 def check_market():
@@ -329,6 +339,8 @@ def check_stock_data():
 
 def check_orders(hedged_order):
     # TODO: make sure order is received before we check to see if it executed
+
+    global hedging
 
     # Position is not hedged when orders are first submitted to Alpaca
     position_not_hedged = False
@@ -376,7 +388,8 @@ def check_orders(hedged_order):
                                                         qty=int(buy_order.qty - buy_order.filled_qty),
                                                         side=buy_order.side, type=buy_order.order_type,
                                                         time_in_force=buy_order.time_in_force,
-                                                        limit_price=float(buy_order.limit_price + buy_limit_price_adjustment))
+                                                        limit_price=float(
+                                                            buy_order.limit_price + buy_limit_price_adjustment))
                 hedged_order.buy_order = new_buy_order
             except Exception as error:
                 print(error)
@@ -389,14 +402,39 @@ def check_orders(hedged_order):
                                                          qty=int(sell_order.qty - sell_order.filled_qty),
                                                          side=sell_order.side, type=sell_order.order_type,
                                                          time_in_force=sell_order.time_in_force,
-                                                         limit_price=float(sell_order.limit_price - sell_limit_price_adjustment))
+                                                         limit_price=float(
+                                                             sell_order.limit_price - sell_limit_price_adjustment))
                 hedged_order.sell_order = new_sell_order
             except Exception as error:
                 print(error)
 
-        if not position_not_hedged:
-            global hedging
+        if position_not_hedged and check_count == 10:
+            try:
+                if buy_order_exists:
+                    alpaca_api.cancel_order(buy_order.id)
+                    if buy_order.filled_qty != buy_order.qty:
+                        alpaca_api.submit_order(symbol=buy_order.symbol, qty=int(buy_order.filled_qty), side="sell",
+                                                type="market", time_in_force="gtc")
+                else:
+                    alpaca_api.submit_order(symbol=buy_order.symbol, qty=buy_order.filled_qty, side="sell",
+                                            type="market", time_in_force="gtc")
 
+                if sell_order_exists:
+                    alpaca_api.cancel_order(sell_order.id)
+                    if sell_order.filled_qty != sell_order.qty:
+                        alpaca_api.submit_order(symbol=sell_order.symbol, qty=int(sell_order.filled_qty), side="buy",
+                                                type="market", time_in_force="gtc")
+                else:
+                    alpaca_api.submit_order(symbol=sell_order.symbol, qty=sell_order.filled_qty, side="buy",
+                                            type="market", time_in_force="gtc")
+
+                hedging = False
+
+            except Exception as error:
+                print(error)
+                print("Could not cancel our orders and liquidate our positions")
+
+        if not position_not_hedged:
             hedging = False
 
         check_count = check_count + 1
@@ -406,7 +444,6 @@ def check_orders(hedged_order):
 
 # noinspection PyArgumentList,PyArgumentList,PyArgumentList,PyArgumentList
 def open_position(expensive_class, cheaper_class, side, ratio):
-
     global hedging
 
     # Shows a flag to the rest of the program that it is currently trying to hedge a position and no further positions should be opened until hedged or canceled
@@ -416,9 +453,11 @@ def open_position(expensive_class, cheaper_class, side, ratio):
         if side == "credit" and account.buying_power >= cheaper_class.ask_price + expensive_class.bid_price:
 
             sell_order = alpaca_api.submit_order(expensive_class.symbol, qty=1, side='sell', type='limit',
-                                                 limit_price=expensive_class.ask_price - original_sell_limit_price, time_in_force='gtc')
+                                                 limit_price=expensive_class.ask_price - original_sell_limit_price,
+                                                 time_in_force='gtc')
             buy_order = alpaca_api.submit_order(cheaper_class.symbol, qty=int(ratio), side='buy', type='limit',
-                                                limit_price=cheaper_class.bid_price + original_buy_limit_price, time_in_force='gtc')
+                                                limit_price=cheaper_class.bid_price + original_buy_limit_price,
+                                                time_in_force='gtc')
 
             packaged_sell_order = Order(id=sell_order.id, asset_id=sell_order.asset_id, symbol=expensive_class.symbol,
                                         limit_price=sell_order.limit_price,
@@ -426,7 +465,8 @@ def open_position(expensive_class, cheaper_class, side, ratio):
                                         filled_qty=sell_order.filled_qty, time_in_force=sell_order.time_in_force,
                                         status=sell_order.status)
 
-            packaged_buy_order = Order(id=buy_order.id, asset_id=buy_order.asset_id, symbol=cheaper_class.symbol, limit_price=buy_order.limit_price,
+            packaged_buy_order = Order(id=buy_order.id, asset_id=buy_order.asset_id, symbol=cheaper_class.symbol,
+                                       limit_price=buy_order.limit_price,
                                        order_type=buy_order.order_type, side=buy_order.side, qty=buy_order.qty,
                                        filled_qty=buy_order.filled_qty, time_in_force=buy_order.time_in_force,
                                        status=buy_order.status)
@@ -442,9 +482,11 @@ def open_position(expensive_class, cheaper_class, side, ratio):
         elif side == "debit" and account.buying_power >= cheaper_class.ask_price + expensive_class.bid_price:
 
             sell_order = alpaca_api.submit_order(cheaper_class.symbol, qty=int(ratio), side='sell', type='limit',
-                                                 limit_price=cheaper_class.ask_price - original_sell_limit_price, time_in_force='gtc')
+                                                 limit_price=cheaper_class.ask_price - original_sell_limit_price,
+                                                 time_in_force='gtc')
             buy_order = alpaca_api.submit_order(expensive_class.symbol, qty=1, side='buy', type='limit',
-                                                limit_price=expensive_class.bid_price + original_buy_limit_price, time_in_force='gtc')
+                                                limit_price=expensive_class.bid_price + original_buy_limit_price,
+                                                time_in_force='gtc')
 
             packaged_sell_order = Order(id=sell_order.id, asset_id=sell_order.asset_id, symbol=cheaper_class.symbol,
                                         limit_price=sell_order.limit_price,
