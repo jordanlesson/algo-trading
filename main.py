@@ -26,10 +26,10 @@ conn = StreamConn(
 )
 
 # Global Declaration of Stock A data (empty)
-stock_a = Stock(symbol=input("Enter Stock A Symbol *IN ALL CAPS*: "), price=None, bid_price=None, ask_price=None)
+stock_a = Stock(symbol=input("Enter Stock A Symbol: ").capitalize(), price=None, bid_price=None, ask_price=None)
 
 # Global Declaration of Stock B data (empty)
-stock_b = Stock(symbol=input("Enter Stock B Symbol *IN ALL CAPS*: "), price=None, bid_price=None, ask_price=None)
+stock_b = Stock(symbol=input("Enter Stock B Symbol: ").capitalize(), price=None, bid_price=None, ask_price=None)
 
 # Global Declaration of Alpaca account data (empty)
 account = Account(buying_power=None, portfolio_value=None, reg_t_buying_power=None)
