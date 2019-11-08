@@ -7,3 +7,4 @@ class Stock:
         self.price = price
         self.bid_price = bid_price
         self.ask_price = ask_price
+

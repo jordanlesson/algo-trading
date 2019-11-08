@@ -20,3 +20,4 @@ class Order:
             return NotImplemented
 
         return self.id == other.id and self.symbol == other.symbol and self.side == other.side
+

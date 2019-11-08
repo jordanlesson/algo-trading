@@ -13,23 +13,23 @@ import time
 # Declaration of Alpaca API
 # noinspection SpellCheckingInspection
 alpaca_api = alpaca.REST(
-    key_id='PK9W3C1GMJM9X919CMPY',
-    secret_key='ws4CXCL1glbV9glqxY/uJTNjTguWBAkP0vDxvkYw',
+    key_id='PKJRTQBOG7TJIRB68M63',
+    secret_key='LG43MAsTsCANCtCg7ynJz6GeIw4FFlZ3zHo/SDgC',
     base_url='https://paper-api.alpaca.markets',
 )
 
 # Declaration of stream
 conn = StreamConn(
-    key_id="PK9W3C1GMJM9X919CMPY",
-    secret_key="ws4CXCL1glbV9glqxY/uJTNjTguWBAkP0vDxvkYw",
+    key_id="PKJRTQBOG7TJIRB68M63",
+    secret_key="LG43MAsTsCANCtCg7ynJz6GeIw4FFlZ3zHo/SDgC",
     base_url="https://paper-api.alpaca.markets",
 )
 
 # Global Declaration of Stock A data (empty)
-stock_a = Stock(symbol=input("Enter Stock A Symbol: ").capitalize(), price=None, bid_price=None, ask_price=None)
+stock_a = Stock(symbol="GOOG", price=None, bid_price=None, ask_price=None)
 
 # Global Declaration of Stock B data (empty)
-stock_b = Stock(symbol=input("Enter Stock B Symbol: ").capitalize(), price=None, bid_price=None, ask_price=None)
+stock_b = Stock(symbol="GOOGL", price=None, bid_price=None, ask_price=None)
 
 # Global Declaration of Alpaca account data (empty)
 account = Account(buying_power=None, portfolio_value=None, reg_t_buying_power=None)
@@ -45,7 +45,7 @@ sell_limit_price_adjustment = float(
     input("Enter the amount of cents that should be added to whenever we adjust the sell limit price: "))
 target_credit_spread = float(input("Enter Target Credit Spread: "))
 target_debit_spread = float(input("Enter Target Debit Spread: "))
-ratio_multiplier = float(input(
+ratio_multiplier = int(input(
     "Enter the multiplier that makes the share price of the cheaper stock equal to the more expensive stock (ex. 1500 for BRK.B): "))
 
 # Global Declaration of our positions, orders, and hedged orders (empty)
@@ -62,11 +62,10 @@ async def on_account_updates(conn, channel, account):
 
 
 # Function that is called whenever an order update occurs (new orders, fills, partial fills, cancels, etc...)
-# noinspection SpellCheckingInspection,PyShadowingNames
-@conn.on(r'trade_updates')
+@conn.on(r'^trade_updates$')
 async def on_trade_updates(conn, channel, data):
     global orders
-    global hedged_orders
+    global positions
 
     order_data = data
     order = order_data.order
@@ -81,10 +80,81 @@ async def on_trade_updates(conn, channel, data):
     elif order_data.event == "fill":
         if orders.count(packaged_order) > 0:
             orders.remove(packaged_order)
+
+        position_exists = False
+
+        if len(positions) != 0:
+            for position in positions:
+                if position.order_id == packaged_order.id:
+                    position_exists = True
+                    position_index = positions.index(position)
+                    position_side = None
+                    if packaged_order.side == "buy":
+                        position_side = "long"
+                    else:
+                        position_side = "short"
+                    positions[position_index] = Position(asset_id=packaged_order.asset_id, symbol=packaged_order.symbol,
+                                                         order_id=packaged_order.id, qty=packaged_order.qty,
+                                                         side=position_side)
+
+            if not position_exists:
+                position_side = None
+                if packaged_order.side == "buy":
+                    position_side = "long"
+                else:
+                    position_side = "short"
+                packaged_position = Position(asset_id=packaged_order.asset_id, symbol=packaged_order.symbol,
+                                             order_id=packaged_order.id, qty=packaged_order.qty, side=position_side)
+                positions.append(packaged_position)
+        else:
+            position_side = None
+            if packaged_order.side == "buy":
+                position_side = "long"
+            else:
+                position_side = "short"
+            packaged_position = Position(asset_id=packaged_order.asset_id, symbol=packaged_order.symbol,
+                                         order_id=packaged_order.id, qty=packaged_order.qty, side=position_side)
+            positions.append(packaged_position)
+
     elif order_data.event == "partial_fill":
         if orders.count(packaged_order) > 0:
             order_index = orders.index(packaged_order)
             orders[order_index] = packaged_order
+
+        if len(positions) != 0:
+            for position in positions:
+                if position.order_id == packaged_order.id:
+                    position_exists = True
+                    position_index = positions.index(position)
+                    position_side = None
+                    if packaged_order.side == "buy":
+                        position_side = "long"
+                    else:
+                        position_side = "short"
+                    positions[position_index] = Position(asset_id=packaged_order.asset_id, symbol=packaged_order.symbol,
+                                                         order_id=packaged_order.id, qty=packaged_order.filled_qty,
+                                                         side=position_side)
+
+            if not position_exists:
+                position_side = None
+                if packaged_order.side == "buy":
+                    position_side = "long"
+                else:
+                    position_side = "short"
+                packaged_position = Position(asset_id=packaged_order.asset_id, symbol=packaged_order.symbol,
+                                             order_id=packaged_order.id, qty=packaged_order.filled_qty,
+                                             side=position_side)
+                positions.append(packaged_position)
+        else:
+            position_side = None
+            if packaged_order.side == "buy":
+                position_side = "long"
+            else:
+                position_side = "short"
+            packaged_position = Position(asset_id=packaged_order.asset_id, symbol=packaged_order.symbol,
+                                         order_id=packaged_order.id, qty=packaged_order.qty, side=position_side)
+            positions.append(packaged_position)
+
     elif order_data.event == "canceled" or order_data.event == "expired":
         if orders.count(packaged_order) > 0:
             orders.remove(packaged_order)
@@ -99,7 +169,7 @@ def main():
     # Retrieves initial account data before running algorithm
     # TODO: add a function that retrieves the historical data of stock A and stock B
     account = get_account()
-    positions = get_positions()
+    # positions = get_positions()
     # TODO: figure out a way to keep corresponding orders together off algorithm start-up
     alpaca_api.cancel_all_orders()
 
@@ -107,7 +177,7 @@ def main():
         # Runs stream connection functions in different threads
         Thread(target=stock_stream_connection).start()
         Thread(target=account_updates).start()
-        Thread(target=position_updates).start()
+        # Thread(target=position_updates).start()
         Thread(target=order_updates).start()
     else:
         print("Error Occurred: Either a failure in fetching account data, positions, or orders")
@@ -127,7 +197,7 @@ def get_account():
 
 
 # noinspection PyShadowingNames
-def get_positions():
+'''def get_positions():
     positions = []
 
     try:
@@ -141,7 +211,7 @@ def get_positions():
         return positions
     except Exception as error:
         print(error)
-        return None
+        return None'''
 
 
 # noinspection PyShadowingNames,PyArgumentList
@@ -183,8 +253,31 @@ def account_updates():
 def order_updates():
     conn.run(['trade_updates'])
 
+    '''global orders
 
-def position_updates():
+    current_orders = []
+
+    while True:
+        try:
+            order_list = alpaca_api.list_orders()
+            if len(order_list) != 0:
+                for order in order_list:
+                    packaged_order = Order(id=order.id, asset_id=order.asset_id, symbol=order.symbol,
+                                           limit_price=float(order.limit_price),
+                                           order_type=order.order_type, qty=int(order.qty), filled_qty=int(order.filled_qty), side=order.side,
+                                           time_in_force=order.time_in_force, status=order.status)
+                    current_orders.append(packaged_order)
+                orders = current_orders
+            else:
+                orders = []
+
+        except Exception as error:
+            print(error)
+
+        time.sleep(0.5)'''
+
+
+'''def position_updates():
     global positions
 
     current_positions = []
@@ -206,7 +299,7 @@ def position_updates():
         except Exception as error:
             print(error)
 
-        time.sleep(0.5)
+        time.sleep(0.5)'''
 
 
 def stock_stream_connection():
@@ -274,7 +367,7 @@ def on_stock_update(ws, message):
     market_is_open = True
     stock_data_exists = check_stock_data()
 
-    if market_is_open and stock_data_exists:
+    if market_is_open and stock_data_exists and not hedging:
         # Run Algorithm Here
 
         # Declaration of expensive and cheaper class (empty)
@@ -314,8 +407,7 @@ def on_close(ws):
 def on_open(ws):
     ws.send('{"action":"auth","params":"AKK5WUTECIGM1G8XTN3C"}')
     ws.send(
-        '{"action":"subscribe","params":"Q.{},T.{},Q.{},T.{}"}'.format(stock_a.symbol, stock_a.symbol, stock_b.symbol,
-                                                                       stock_b.symbol))
+        '{"action":"subscribe","params":"Q.GOOG,T.GOOG,Q.GOOGL,T.GOOGL"}')
 
 
 def check_market():
@@ -341,9 +433,12 @@ def check_orders(hedged_order):
     # TODO: make sure order is received before we check to see if it executed
 
     global hedging
+    global positions
+
+    hedging = True
 
     # Position is not hedged when orders are first submitted to Alpaca
-    position_not_hedged = False
+    position_not_hedged = True
 
     # Orders exist when first submitted to Alpaca
     buy_order_exists = True
@@ -353,30 +448,47 @@ def check_orders(hedged_order):
     buy_position_exists = False
     sell_position_exists = False
 
+    buy_position = None
+    sell_position = None
+
     # Initialization of the amount of times we check if our position is hedged
     check_count = 0
 
-    while position_not_hedged:
+    while position_not_hedged and check_count <= 10:
+
+        check_count = check_count + 1
         buy_order = hedged_order.buy_order
         sell_order = hedged_order.sell_order
 
-        for order in orders:
-            if buy_order != order:
-                buy_order_exists = False
-            else:
-                hedged_order.buy_order.filled_qty = order.filled_qty
+        if buy_order in orders:
+            buy_order_exists = True
+            order_index = orders.index(buy_order)
+        else:
+            buy_order_exists = False
 
-            if sell_order != order:
-                sell_order_exists = False
-            else:
-                hedged_order.sell_order.filled_qty = order.filled_qty
+        print("Buy Order Exists: {}".format(buy_order_exists))
+
+        if sell_order in orders:
+            sell_order_exists = True
+            order_index = orders.index(sell_order)
+        else:
+            sell_order_exists = False
+
+        print("Sell Order Exists: {}".format(sell_order_exists))
 
         if not buy_order_exists or not sell_order_exists:
             for position in positions:
-                if buy_order.asset_id == position.asset_id:
+                if buy_order.id == position.order_id and position.side == "long":
                     buy_position_exists = True
-                if sell_order.asset_id == position.asset_id:
+                    buy_position = position
+                    buy_order.filled_qty = position.qty
+                if sell_order.id == position.order_id and position.side == "short":
                     sell_position_exists = True
+                    sell_position = position
+                    sell_order.filled_qty = position.qty
+
+        print("Buy Position Exists: {}".format(buy_position_exists))
+        print("Sell Position Exists: {}".format(sell_position_exists))
 
         position_not_hedged = not buy_position_exists or not sell_position_exists
 
@@ -385,12 +497,22 @@ def check_orders(hedged_order):
             try:
                 alpaca_api.cancel_order(buy_order.id)
                 new_buy_order = alpaca_api.submit_order(symbol=buy_order.symbol,
-                                                        qty=int(buy_order.qty - buy_order.filled_qty),
+                                                        qty=int(buy_order.qty) - int(buy_order.filled_qty),
                                                         side=buy_order.side, type=buy_order.order_type,
                                                         time_in_force=buy_order.time_in_force,
                                                         limit_price=float(
-                                                            buy_order.limit_price + buy_limit_price_adjustment))
-                hedged_order.buy_order = new_buy_order
+                                                            buy_order.limit_price) + float(buy_limit_price_adjustment))
+
+                packaged_buy_order = Order(id=new_buy_order.id, asset_id=new_buy_order.asset_id,
+                                           symbol=new_buy_order.symbol,
+                                           limit_price=float(new_buy_order.limit_price),
+                                           order_type=new_buy_order.order_type, side=new_buy_order.side,
+                                           qty=int(new_buy_order.qty),
+                                           filled_qty=int(new_buy_order.filled_qty),
+                                           time_in_force=new_buy_order.time_in_force,
+                                           status=new_buy_order.status)
+
+                hedged_order.buy_order = packaged_buy_order
             except Exception as error:
                 print(error)
 
@@ -399,58 +521,154 @@ def check_orders(hedged_order):
             try:
                 alpaca_api.cancel_order(sell_order.id)
                 new_sell_order = alpaca_api.submit_order(symbol=sell_order.symbol,
-                                                         qty=int(sell_order.qty - sell_order.filled_qty),
+                                                         qty=int(sell_order.qty) - int(sell_order.filled_qty),
                                                          side=sell_order.side, type=sell_order.order_type,
                                                          time_in_force=sell_order.time_in_force,
-                                                         limit_price=float(
-                                                             sell_order.limit_price - sell_limit_price_adjustment))
-                hedged_order.sell_order = new_sell_order
+                                                         limit_price=float(sell_order.limit_price) - float(
+                                                             sell_limit_price_adjustment))
+
+                packaged_sell_order = Order(id=new_sell_order.id, asset_id=new_sell_order.asset_id,
+                                            symbol=new_sell_order.symbol,
+                                            limit_price=float(new_sell_order.limit_price),
+                                            order_type=new_sell_order.order_type, side=new_sell_order.side,
+                                            qty=int(new_sell_order.qty),
+                                            filled_qty=int(new_sell_order.filled_qty),
+                                            time_in_force=new_sell_order.time_in_force,
+                                            status=new_sell_order.status)
+
+                hedged_order.sell_order = packaged_sell_order
             except Exception as error:
                 print(error)
 
-        if position_not_hedged and check_count == 10:
+        if position_not_hedged and check_count >= 10:
             try:
+
                 if buy_order_exists:
                     alpaca_api.cancel_order(buy_order.id)
-                    if buy_order.filled_qty != buy_order.qty:
-                        alpaca_api.submit_order(symbol=buy_order.symbol, qty=int(buy_order.filled_qty), side="sell",
-                                                type="market", time_in_force="gtc")
-                else:
-                    alpaca_api.submit_order(symbol=buy_order.symbol, qty=buy_order.filled_qty, side="sell",
-                                            type="market", time_in_force="gtc")
+
+                    print("Buy Order Filled Qty: {}".format(buy_order.filled_qty))
+                    if buy_position_exists and buy_position is not None and buy_order.filled_qty != 0:
+                        Thread(target=liquidate_position, args=(buy_position, int(buy_order.filled_qty))).start()
+
+                elif buy_position_exists and buy_position:
+                    Thread(target=liquidate_position, args=(buy_position, int(buy_order.qty))).start()
 
                 if sell_order_exists:
                     alpaca_api.cancel_order(sell_order.id)
-                    if sell_order.filled_qty != sell_order.qty:
-                        alpaca_api.submit_order(symbol=sell_order.symbol, qty=int(sell_order.filled_qty), side="buy",
-                                                type="market", time_in_force="gtc")
-                else:
-                    alpaca_api.submit_order(symbol=sell_order.symbol, qty=sell_order.filled_qty, side="buy",
-                                            type="market", time_in_force="gtc")
 
-                hedging = False
+                    print("Sell Order Filled Qty: {}".format(sell_order.filled_qty))
+                    if sell_position_exists and sell_position is not None and sell_order.filled_qty != 0:
+                        Thread(target=liquidate_position, args=(sell_position, int(sell_order.filled_qty))).start()
+
+                elif sell_position_exists and sell_position is not None:
+                    Thread(target=liquidate_position, args=(sell_position, int(sell_order.qty))).start()
+
+                position_not_hedged = False
+
+                print("Orders canceled and positions liquidated")
 
             except Exception as error:
                 print(error)
                 print("Could not cancel our orders and liquidate our positions")
 
         if not position_not_hedged:
-            hedging = False
+            if buy_position_exists and sell_position_exists:
+                positions = []
+                hedging = False
+
+        print(check_count)
+
+        time.sleep(5.0)
+
+
+def liquidate_position(position, qty):
+    global positions
+
+    position_exists = True
+
+    submitted_order = None
+
+    stock_data = None
+    if position.symbol == stock_a.symbol:
+        stock_data = stock_a
+    else:
+        stock_data = stock_b
+
+    check_count = 0
+    while position_exists:
 
         check_count = check_count + 1
 
-    time.sleep(5.0)
+        if position in positions:
+            position_exists = True
+        else:
+            position_exists = False
+        print("LIQUIDATION POSITION EXISTS {}".format(position_exists))
+
+        order = None
+
+        try:
+            if position.side == "long" and position_exists:
+                if check_count == 1:
+                    print(position.symbol)
+                    order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="sell", type="limit",
+                                                    limit_price=float(stock_data.bid_price) + 0.20, time_in_force="gtc")
+
+                if check_count == 3:
+                    print(position.symbol)
+                    alpaca_api.cancel_order(submitted_order.id)
+                    order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="sell", type="limit",
+                                                    limit_price=float(stock_data.bid_price) + 0.10, time_in_force="gtc")
+
+                if check_count == 6:
+                    print(position.symbol)
+                    alpaca_api.cancel_order(submitted_order.id)
+                    order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="sell", type="market",
+                                                    time_in_force="gtc")
+            elif position.side == "short" and position_exists:
+                if check_count == 1:
+                    print(position.symbol)
+                    order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="buy", type="limit",
+                                                    limit_price=float(stock_data.ask_price) - 0.20, time_in_force="gtc")
+
+                if check_count == 3:
+                    print(position.symbol)
+                    alpaca_api.cancel_order(submitted_order.id)
+                    order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="buy", type="limit",
+                                                    limit_price=float(stock_data.ask_price) - 0.10, time_in_force="gtc")
+
+                if check_count == 6:
+                    print(position.symbol)
+                    alpaca_api.cancel_order(submitted_order.id)
+                    order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="buy", type="market",
+                                                    time_in_force="gtc")
+
+        except Exception as error:
+            print(error)
+            position_exists = False
+
+        if order is not None and check_count < 6:
+            submitted_order = Order(id=order.id, asset_id=order.asset_id, symbol=order.symbol,
+                                    limit_price=float(order.limit_price),
+                                    order_type=order.order_type, side=order.side, qty=int(order.qty),
+                                    filled_qty=int(order.filled_qty), time_in_force=order.time_in_force,
+                                    status=order.status)
+
+        if not position_exists:
+            positions = []
+
+        time.sleep(5.0)
 
 
 # noinspection PyArgumentList,PyArgumentList,PyArgumentList,PyArgumentList
 def open_position(expensive_class, cheaper_class, side, ratio):
     global hedging
 
-    # Shows a flag to the rest of the program that it is currently trying to hedge a position and no further positions should be opened until hedged or canceled
-    hedging = True
-
     try:
-        if side == "credit" and account.buying_power >= cheaper_class.ask_price + expensive_class.bid_price:
+        if side == "credit" and account.buying_power >= cheaper_class.ask_price + expensive_class.bid_price and not hedging:
+
+            # Shows a flag to the rest of the program that it is currently trying to hedge a position and no further positions should be opened until hedged or canceled
+            hedging = True
 
             sell_order = alpaca_api.submit_order(expensive_class.symbol, qty=1, side='sell', type='limit',
                                                  limit_price=expensive_class.ask_price - original_sell_limit_price,
@@ -460,26 +678,29 @@ def open_position(expensive_class, cheaper_class, side, ratio):
                                                 time_in_force='gtc')
 
             packaged_sell_order = Order(id=sell_order.id, asset_id=sell_order.asset_id, symbol=expensive_class.symbol,
-                                        limit_price=sell_order.limit_price,
-                                        order_type=sell_order.order_type, side=sell_order.side, qty=sell_order.qty,
-                                        filled_qty=sell_order.filled_qty, time_in_force=sell_order.time_in_force,
+                                        limit_price=float(sell_order.limit_price),
+                                        order_type=sell_order.order_type, side=sell_order.side, qty=int(sell_order.qty),
+                                        filled_qty=int(sell_order.filled_qty), time_in_force=sell_order.time_in_force,
                                         status=sell_order.status)
 
             packaged_buy_order = Order(id=buy_order.id, asset_id=buy_order.asset_id, symbol=cheaper_class.symbol,
-                                       limit_price=buy_order.limit_price,
-                                       order_type=buy_order.order_type, side=buy_order.side, qty=buy_order.qty,
-                                       filled_qty=buy_order.filled_qty, time_in_force=buy_order.time_in_force,
+                                       limit_price=float(buy_order.limit_price),
+                                       order_type=buy_order.order_type, side=buy_order.side, qty=int(buy_order.qty),
+                                       filled_qty=int(buy_order.filled_qty), time_in_force=buy_order.time_in_force,
                                        status=buy_order.status)
 
             hedged_order = HedgedOrder(sell_order=packaged_sell_order, buy_order=packaged_buy_order, side=side)
 
             hedged_orders.append(hedged_order)
 
-            print('Credit Spread Bought')
+            print('Credit Spread Order Placed')
 
-            Thread(target=check_orders(hedged_order)).start()
+            Thread(target=check_orders, args=(hedged_order,)).start()  # Problem with parenthesis
 
-        elif side == "debit" and account.buying_power >= cheaper_class.ask_price + expensive_class.bid_price:
+        elif side == "debit" and account.buying_power >= cheaper_class.ask_price + expensive_class.bid_price and not hedging:
+
+            # Shows a flag to the rest of the program that it is currently trying to hedge a position and no further positions should be opened until hedged or canceled
+            hedging = True
 
             sell_order = alpaca_api.submit_order(cheaper_class.symbol, qty=int(ratio), side='sell', type='limit',
                                                  limit_price=cheaper_class.ask_price - original_sell_limit_price,
@@ -489,26 +710,27 @@ def open_position(expensive_class, cheaper_class, side, ratio):
                                                 time_in_force='gtc')
 
             packaged_sell_order = Order(id=sell_order.id, asset_id=sell_order.asset_id, symbol=cheaper_class.symbol,
-                                        limit_price=sell_order.limit_price,
-                                        order_type=sell_order.order_type, side=sell_order.side, qty=sell_order.qty,
-                                        filled_qty=sell_order.filled_qty, time_in_force=sell_order.time_in_force,
+                                        limit_price=float(sell_order.limit_price),
+                                        order_type=sell_order.order_type, side=sell_order.side, qty=int(sell_order.qty),
+                                        filled_qty=int(sell_order.filled_qty), time_in_force=sell_order.time_in_force,
                                         status=sell_order.status)
 
             packaged_buy_order = Order(id=buy_order.id, asset_id=buy_order.asset_id, symbol=expensive_class.symbol,
-                                       limit_price=buy_order.limit_price,
-                                       order_type=buy_order.order_type, side=buy_order.side, qty=buy_order.qty,
-                                       filled_qty=buy_order.filled_qty, time_in_force=buy_order.time_in_force,
+                                       limit_price=float(buy_order.limit_price),
+                                       order_type=buy_order.order_type, side=buy_order.side, qty=int(buy_order.qty),
+                                       filled_qty=int(buy_order.filled_qty), time_in_force=buy_order.time_in_force,
                                        status=buy_order.status)
 
             hedged_order = HedgedOrder(sell_order=packaged_sell_order, buy_order=packaged_buy_order, side=side)
 
             hedged_orders.append(hedged_order)
 
-            print('Debit Spread Bought')
+            print('Debit Spread Order Placed')
 
-            Thread(target=check_orders(hedged_order)).start()
+            Thread(target=check_orders, args=(hedged_order,)).start()
 
     except Exception as error:
+        hedging = False
         print(error)
 
 
