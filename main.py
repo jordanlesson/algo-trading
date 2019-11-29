@@ -13,15 +13,15 @@ import time
 # Declaration of Alpaca API
 # noinspection SpellCheckingInspection
 alpaca_api = alpaca.REST(
-    key_id='PKJRTQBOG7TJIRB68M63',
-    secret_key='LG43MAsTsCANCtCg7ynJz6GeIw4FFlZ3zHo/SDgC',
+    key_id='PKMHQUWERAMULK15DY13',
+    secret_key='FpaNeZgF1mDg0J3nVuqWklSRfcRsh60ZioTOjccc',
     base_url='https://paper-api.alpaca.markets',
 )
 
 # Declaration of stream
 conn = StreamConn(
-    key_id="PKJRTQBOG7TJIRB68M63",
-    secret_key="LG43MAsTsCANCtCg7ynJz6GeIw4FFlZ3zHo/SDgC",
+    key_id="PKMHQUWERAMULK15DY13",
+    secret_key="FpaNeZgF1mDg0J3nVuqWklSRfcRsh60ZioTOjccc",
     base_url="https://paper-api.alpaca.markets",
 )
 
@@ -47,6 +47,8 @@ target_credit_spread = float(input("Enter Target Credit Spread: "))
 target_debit_spread = float(input("Enter Target Debit Spread: "))
 ratio_multiplier = int(input(
     "Enter the multiplier that makes the share price of the cheaper stock equal to the more expensive stock (ex. 1500 for BRK.B): "))
+'''credit_focus = input("Should the algorithm only focus on credit spreads? ")
+debit_focus = input("Should the algorithm only focus on debit spreads? ")'''
 
 # Global Declaration of our positions, orders, and hedged orders (empty)
 positions = []
@@ -572,7 +574,7 @@ def check_orders(hedged_order):
                 print("Could not cancel our orders and liquidate our positions")
 
         if not position_not_hedged:
-            if buy_position_exists and sell_position_exists:
+            if (buy_position_exists and sell_position_exists) or (not buy_position_exists and not sell_position_exists):
                 positions = []
                 hedging = False
 
@@ -581,8 +583,11 @@ def check_orders(hedged_order):
         time.sleep(5.0)
 
 
-def liquidate_position(position, qty):
+async def liquidate_position(position, qty):
     global positions
+    global hedging
+
+    current_position = position
 
     position_exists = True
 
@@ -599,49 +604,81 @@ def liquidate_position(position, qty):
 
         check_count = check_count + 1
 
-        if position in positions:
+        # if submitted_order is None:
+        if current_position in positions:
             position_exists = True
+            position_index = positions.index(position)
+            current_position.qty = positions[position_index].qty
         else:
             position_exists = False
-        print("LIQUIDATION POSITION EXISTS {}".format(position_exists))
+        print("LIQUIDATION POSITION EXISTS: {}".format(position_exists))
+        '''else:
+            position_exists = False
+            for currentPosition in positions:
+                if currentPosition.order_id == submitted_order.id:
+                    position_exists = True'''
 
         order = None
 
         try:
+            print(position.symbol)
+
             if position.side == "long" and position_exists:
                 if check_count == 1:
-                    print(position.symbol)
-                    order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="sell", type="limit",
-                                                    limit_price=float(stock_data.bid_price) + 0.20, time_in_force="gtc")
+                    print("Placing liquidation sell order")
+
+                    order = await alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="sell", type="limit",
+                                                          limit_price=float(stock_data.bid_price) + 0.20,
+                                                          time_in_force="gtc")
 
                 if check_count == 3:
-                    print(position.symbol)
-                    alpaca_api.cancel_order(submitted_order.id)
-                    order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="sell", type="limit",
-                                                    limit_price=float(stock_data.bid_price) + 0.10, time_in_force="gtc")
+                    print("Adjusting liquidation sell order by .10 cents")
+
+                    if submitted_order in orders:
+                        await alpaca_api.cancel_order(submitted_order.id)
+                        time.sleep(3.0)
+                        order = await alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="sell",
+                                                              type="limit",
+                                                              limit_price=float(stock_data.bid_price) + 0.10,
+                                                              time_in_force="gtc")
 
                 if check_count == 6:
-                    print(position.symbol)
-                    alpaca_api.cancel_order(submitted_order.id)
-                    order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="sell", type="market",
-                                                    time_in_force="gtc")
+                    print("Adjusting liquidation sell order by market order")
+
+                    position_exists = False
+
+                    if submitted_order in orders:
+                        alpaca_api.cancel_order(submitted_order.id)
+                        time.sleep(3.0)
+                        order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="sell", type="market",
+                                                        time_in_force="gtc")
             elif position.side == "short" and position_exists:
                 if check_count == 1:
-                    print(position.symbol)
+                    print("Placing liquidation buy order")
+
                     order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="buy", type="limit",
                                                     limit_price=float(stock_data.ask_price) - 0.20, time_in_force="gtc")
 
                 if check_count == 3:
-                    print(position.symbol)
-                    alpaca_api.cancel_order(submitted_order.id)
-                    order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="buy", type="limit",
-                                                    limit_price=float(stock_data.ask_price) - 0.10, time_in_force="gtc")
+                    print("Adjusting liquidation buy order by .10 cents")
+
+                    if submitted_order in orders:
+                        alpaca_api.cancel_order(submitted_order.id)
+                        time.sleep(3.0)
+                        order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="buy", type="limit",
+                                                        limit_price=float(stock_data.ask_price) - 0.10,
+                                                        time_in_force="gtc")
 
                 if check_count == 6:
-                    print(position.symbol)
-                    alpaca_api.cancel_order(submitted_order.id)
-                    order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="buy", type="market",
-                                                    time_in_force="gtc")
+                    print("Adjusting liquidation buy order by market order")
+
+                    position_exists = False
+
+                    if submitted_order in orders:
+                        alpaca_api.cancel_order(submitted_order.id)
+                        time.sleep(3.0)
+                        order = alpaca_api.submit_order(symbol=position.symbol, qty=qty, side="buy", type="market",
+                                                        time_in_force="gtc")
 
         except Exception as error:
             print(error)
@@ -655,7 +692,9 @@ def liquidate_position(position, qty):
                                     status=order.status)
 
         if not position_exists:
+            print("Position Liquidated")
             positions = []
+            hedging = False
 
         time.sleep(5.0)
 
@@ -671,7 +710,8 @@ def open_position(expensive_class, cheaper_class, side, ratio):
             hedging = True
 
             sell_order = alpaca_api.submit_order(expensive_class.symbol, qty=1, side='sell', type='limit',
-                                                 limit_price=expensive_class.ask_price - original_sell_limit_price,
+                                                 limit_price=expensive_class.ask_price - (
+                                                             2 * original_sell_limit_price),
                                                  time_in_force='gtc')
             buy_order = alpaca_api.submit_order(cheaper_class.symbol, qty=int(ratio), side='buy', type='limit',
                                                 limit_price=cheaper_class.bid_price + original_buy_limit_price,
@@ -706,7 +746,7 @@ def open_position(expensive_class, cheaper_class, side, ratio):
                                                  limit_price=cheaper_class.ask_price - original_sell_limit_price,
                                                  time_in_force='gtc')
             buy_order = alpaca_api.submit_order(expensive_class.symbol, qty=1, side='buy', type='limit',
-                                                limit_price=expensive_class.bid_price + original_buy_limit_price,
+                                                limit_price=expensive_class.bid_price + (2 * original_buy_limit_price),
                                                 time_in_force='gtc')
 
             packaged_sell_order = Order(id=sell_order.id, asset_id=sell_order.asset_id, symbol=cheaper_class.symbol,
