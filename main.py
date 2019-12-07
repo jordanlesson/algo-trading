@@ -36,9 +36,9 @@ account = Account(buying_power=None, portfolio_value=None, reg_t_buying_power=No
 
 # Global Declaration of Arbitrary Values used in our algorithm (limit prices and credit and debit spreads)
 original_buy_limit_price = float(
-    input("Enter the adjustment for when we originally go to buy a stock (should be in cents): "))
+    input("Enter the adjustment for when we originally go to buy a stock (should be in dollars): "))
 original_sell_limit_price = float(
-    input("Enter the adjustment for when we originally go to sell a stock (should be positive and in cents): "))
+    input("Enter the adjustment for when we originally go to sell a stock (should be positive and in dollars): "))
 buy_limit_price_adjustment = float(
     input("Enter the amount of cents that should be added to whenever we adjust the buy limit price: "))
 sell_limit_price_adjustment = float(
@@ -456,6 +456,24 @@ def check_orders(hedged_order):
     # Initialization of the amount of times we check if our position is hedged
     check_count = 0
 
+    expensive_class = None
+    cheaper_class = None
+
+    if stock_a.price >= stock_b.price:
+        expensive_class = stock_a
+        cheaper_class = stock_b
+    else:
+        expensive_class = stock_b
+        cheaper_class = stock_a
+
+    # Spread between the bid and ask
+    bid_ask_spread = None
+
+    if hedged_order.side == "debit":
+        bid_ask_spread = expensive_class.bid_price - (cheaper_class.ask_price * ratio_multiplier)
+    else:
+        bid_ask_spread = expensive_class.ask_price - (cheaper_class.bid_price * ratio_multiplier)
+
     while position_not_hedged and check_count <= 10:
 
         check_count = check_count + 1
@@ -503,7 +521,7 @@ def check_orders(hedged_order):
                                                         side=buy_order.side, type=buy_order.order_type,
                                                         time_in_force=buy_order.time_in_force,
                                                         limit_price=float(
-                                                            buy_order.limit_price) + float(buy_limit_price_adjustment))
+                                                            buy_order.limit_price) + float(bid_ask_spread * .10))
 
                 packaged_buy_order = Order(id=new_buy_order.id, asset_id=new_buy_order.asset_id,
                                            symbol=new_buy_order.symbol,
@@ -526,8 +544,7 @@ def check_orders(hedged_order):
                                                          qty=int(sell_order.qty) - int(sell_order.filled_qty),
                                                          side=sell_order.side, type=sell_order.order_type,
                                                          time_in_force=sell_order.time_in_force,
-                                                         limit_price=float(sell_order.limit_price) - float(
-                                                             sell_limit_price_adjustment))
+                                                         limit_price=float(sell_order.limit_price) - float(bid_ask_spread * .10))
 
                 packaged_sell_order = Order(id=new_sell_order.id, asset_id=new_sell_order.asset_id,
                                             symbol=new_sell_order.symbol,
