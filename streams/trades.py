@@ -1,7 +1,10 @@
 from alpaca_trade_api import StreamConn
 from models.order import Order
 from models.position import Position
-from main import orders, positions, alpaca_key_id, alpaca_secret_key, alpaca_base_url
+from streams.stocks import stock_a, stock_b
+import time
+from config import alpaca_key_id, alpaca_secret_key, alpaca_base_url
+
 
 # Declaration of stream
 conn = StreamConn(
@@ -9,6 +12,13 @@ conn = StreamConn(
     secret_key=alpaca_secret_key,
     base_url=alpaca_base_url,
 )
+
+# Global Declaration of our positions, orders, and hedged orders (empty)
+positions = []
+orders = []
+hedged_orders = []
+
+hedging = False
 
 
 def trade_updates():

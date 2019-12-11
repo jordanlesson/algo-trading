@@ -1,6 +1,14 @@
 import websocket
 import json
-from main import stock_a, stock_b, hedging, spread_trader
+from models.stock import Stock
+
+# from main import hedging, spread_trader
+
+# Global Declaration of Stock A data (empty)
+stock_a = Stock(symbol="GOOG", price=None, bid_price=None, ask_price=None)
+
+# Global Declaration of Stock B data (empty)
+stock_b = Stock(symbol="GOOGL", price=None, bid_price=None, ask_price=None)
 
 
 def stock_stream_connection():
@@ -17,9 +25,6 @@ def stock_stream_connection():
 # Function that gets called whenever a stocks bid price, ask price, or share price changes
 def on_stock_update(ws, message):
     stock_data = json.loads(message)
-
-    # global stock_a
-    # global stock_b
 
     # Filters out stock's trade info (last trade)
     if stock_data[0]["ev"] == 'T':
@@ -65,33 +70,9 @@ def on_stock_update(ws, message):
         if stock_b_quote["ap"] is not None:
             stock_b.ask_price = stock_b_quote["ap"]
 
-        market_is_open = True
-        stock_data_exists = stock_data_check()
-
-        if market_is_open and stock_data_exists and not hedging:
-            spread_trader()
-
-
-def stock_data_check():
-    if stock_a.price is not None and stock_a.bid_price is not None and stock_a.ask_price is not None and stock_b.price is not None and stock_b.bid_price is not None and stock_b.ask_price is not None:
-        return True
-    else:
-        return False
-
-
-'''def check_market():
-    try:
-        clock = alpaca_api.get_clock()
-        if clock.is_open:
-            return True
-        else:
-            return False
-    except Exception as error:
-        print(error)
-        return False'''
 
 def on_open(ws):
-    ws.send('{"action":"auth","params":"AKK5WUTECIGM1G8XTN3C"}')
+    ws.send('{"action":"auth","params":"AKIM1SK8IUHH731B4UIV"}')
     ws.send(
         '{"action":"subscribe","params":"Q.GOOG,T.GOOG,Q.GOOGL,T.GOOGL"}')
 
@@ -101,5 +82,5 @@ def on_close(ws):
 
 
 def on_error(ws, error):
-    # ws.send('{"action":"unsubscribe","params":"Q.GOOG, Q.GOOGL"}')
+    # ws.send('{"action":"unsubscribe","params":"Q.GOOG,T.GOOG,Q.GOOGL,T.GOOGL"}')
     print(error)
